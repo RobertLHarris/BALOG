@@ -1257,6 +1257,8 @@ sub Process_unexpected_RCODE {
   my $StateLine=$_[0];
 
   print "\$StateLine :$StateLine:\n" if ( $Verbose );
+  return if ( $StateLine =~ /192.168.5.1\#53$/ );
+
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d +\d\d:\d\d:\d\d\,\d+).*unexpected RCODE .* resolving '.*': (.*)#53/;
 
   my $Date="$1";
