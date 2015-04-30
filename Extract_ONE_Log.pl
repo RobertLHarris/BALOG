@@ -23,9 +23,9 @@ use POSIX 'strftime';
 my $User=$ENV{"LOGNAME"};
 
 # GetOpt
-use vars qw( $opt_h $opt_v $opt_F $opt_T $opt_t $opt_f $opt_so $opt_fc $opt_fm $opt_fsm $opt_year $opt_sy $opt_fy $opt_m $opt_sm $opt_fm $opt_d $opt_sd $opt_fd $opt_p $opt_nocomp $opt_all $opt_console $opt_airlink $opt_gatekeeper  $opt_messages $opt_fum $opt_drift $opt_na $opt_nac $opt_nas $opt_nam );
+use vars qw( $opt_h $opt_v $opt_F $opt_T $opt_t $opt_f $opt_so $opt_fc $opt_fm $opt_fsm $opt_year $opt_sy $opt_fy $opt_m $opt_sm $opt_fm $opt_d $opt_sd $opt_fd $opt_st $opt_ft $opt_p $opt_nocomp $opt_all $opt_console $opt_airlink $opt_gatekeeper  $opt_messages $opt_fum $opt_drift $opt_na $opt_nac $opt_nas $opt_nam );
 use Getopt::Mixed;
-Getopt::Mixed::getOptions("h v F T=s y=s sy=s fy=s m=s sm=s fm=s d=s sd=s fd=s p=s t f=s so fc=s fm=s fsm=s nocomp all console airlink gatekeeper messages fum drift na nac nas nam");
+Getopt::Mixed::getOptions("h v F T=s y=s sy=s fy=s m=s sm=s fm=s d=s sd=s fd=s st=s ft=s p=s t f=s so fc=s fm=s fsm=s nocomp all console airlink gatekeeper messages fum drift na nac nas nam");
 
 # If someone does --na, disable all auto-loads
 if ( $opt_na ) {
@@ -57,8 +57,8 @@ my %Mons; my %RMons; my @Days;
 #
 # Date Values
 #
-my $StartYear; my $StartMon; my $StartDay; my $StartHour="00"; my $StartMin="00"; my $StartSec="00";
-my $FinishYear; my $FinishMon; my $FinishDay; my $FinishHour="23"; my $FinishMin="59"; my $FinishSec="59";
+my $StartYear; my $StartMon; my $StartDay; my $StartHour="00"; my $StartMin="00"; my $StartSec="00"; my $StartTime;
+my $FinishYear; my $FinishMon; my $FinishDay; my $FinishHour="23"; my $FinishMin="59"; my $FinishSec="59"; my $FinishTime;
 my $DiffYears; my $DiffMons; my $DiffDays; my $DiffHours; my $DiffMins; my $DiffSecs;
 #
 # ATG Console Specific Values
@@ -118,6 +118,8 @@ if ( $opt_h ) {
   print "  -d <DD> = Specify a day start/finish.\n";
   print " --sd <DD> = Specify a starting day.\n";
   print " --fd <DD> = Specify a finish day.\n";
+  print " --st <HH:MM:SS> = Specify a starting time.\n";
+  print " --ft <HH:MM:SS> = Specify a finish time.\n";
   print "\n";
   print "  ** ASTERISKS MUST BE QUOTED OR IT WILL NOT WORK RIGHT!!! **\n";
   print "\n\n";
@@ -450,6 +452,9 @@ sub ImportATGSMFiles {
         &Process_SM_DATEGPS("$Line");
       }
       &Process_SM_DRC("$Line") if ( /^DRC_BUFFER/ );
+      &Process_TX_AGC("$Line") if ( /^Tx_AGC/ );
+      &Process_RX_AGC("$Line") if ( /^Rx_AGC/ );
+      &Process_Pilot_PN("$Line") if ( /^PILOT_PN_ASP/ );
       &Process_SM_Sector_ID("$Line") if ( /^Serving_SectorID/ );
       #&Process_SM_SINR("$Line") if ( /^ASP_FILTERED_SINR/ );
       &Process_SM_SINR("$Line") if ( /^BEST_ASP_SINR_BUFFER/ );
@@ -546,13 +551,46 @@ sub Process_SM_DATEGPS {
     $Lon=$3;
     $Alt=$4;
 
-    $PushLine="Lat $Lat : Longitude $Lon : Altitude $Alt";
+    $PushLine="Latitude $Lat : Longitude $Lon : Altitude $Alt";
   }
 }
 
 
 sub Process_SM_DRC {
   # Lets add the DRC information to our Airlink lines
+  my $Line=$_[0];
+
+  $Line =~ s/,//;
+  $Line =~ s/ +$//;
+
+  $PushLine .= ", $Line";
+}
+
+
+sub Process_TX_AGC {
+  # Lets add the TXA GC information to our Airlink lines
+  my $Line=$_[0];
+
+  $Line =~ s/,//;
+  $Line =~ s/ +$//;
+
+  $PushLine .= ", $Line";
+}
+
+
+sub Process_Pilot_PN {
+  # Lets add the Pilot PN ASP information to our Airlink lines
+  my $Line=$_[0];
+
+  $Line =~ s/,//;
+  $Line =~ s/ +$//;
+
+  $PushLine .= ", $Line";
+}
+
+
+sub Process_RX_AGC {
+  # Lets add the RX AGC information to our Airlink lines
   my $Line=$_[0];
 
   $Line =~ s/,//;
@@ -597,19 +635,6 @@ sub Process_SM_SINR {
 
   $Line =~ s/,//;
 
-#ASP_FILTERED_SINR, -27.0 -27.0 6.1149926 -27.0 -27.0 -27.0 
-#BEST_ASP_SINR_BUFFER, 9.671493 9.54054 9.320058 9.429764 8.613897 9.027718 9.508363 8.542111 9.29818 9.265153 9.81723 8.917029 10.330624 9.586497 8.756264 9.336889 
-
-
-#  my $SINRLine;
-#  if ( $Line =~ /ASP_FILTERED_SINR, -*\d+\.\d+ -*\d+\.\d+ -*\d+\.\d+ -*\d+\.\d+ -*\d+\.\d+ -*\d+\.\d+/ ) {
-#    $Line =~ /ASP_FILTERED_SINR, (-*\d+\.\d+ -*\d+\.\d+ -*\d+\.\d+ -*\d+\.\d+ -*\d+\.\d+ -*\d+\.\d+)/;
-#    my $SINR=$1;
-#    $SINRLine = ", SINR $SINR";
-#  } else {
-#    $SINRLine = ", SINR Invalid";
-#  }
-#  $PushLine .= $SINRLine;
   $PushLine .= ", $Line";
 }
 
@@ -698,7 +723,7 @@ sub Process_GPS_Time {
 
 
 sub Log_Commands {
-  $NetOpsNotes{"0001-Tail"}="Extracting Tail $Tail Starting with $StartYear/$StartMon/$StartDay through $FinishYear/$FinishMon/$FinishDay to $Target";
+  $NetOpsNotes{"0001-Tail"}="Extracting Tail $Tail Starting with $StartYear/$StartMon/$StartDay $StartTime through $FinishYear/$FinishMon/$FinishDay $FinishTime to $Target";
 }
  
 
@@ -813,6 +838,17 @@ sub Define_Parameters {
   } else {
     $FinishDay=`/bin/date +%d`;
     chomp($FinishDay);
+  }
+  # Lets get our starting and finishing time
+  if ( $opt_st ) {
+    $StartTime=$opt_st;
+  } else {
+    $StartTime="00:00:00";
+  }
+  if ( $opt_ft ) {
+    $FinishTime=$opt_ft;
+  } else {
+    $FinishTime="23:23:59";
   }
 }
 
@@ -935,6 +971,3 @@ sub ConvertGPSTimeStamp {
   return( $Time );
  
 }
-
-
-

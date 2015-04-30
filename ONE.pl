@@ -20,9 +20,9 @@ use Date::Manip;
 use Class::Date;
 
 # GetOpt
-use vars qw( $opt_h $opt_v $opt_u $opt_f $opt_t $opt_all $opt_summary $opt_e $opt_temp $opt_fan $opt_flightstates $opt_auth $opt_stats $opt_start $opt_end $opt_pings $opt_dhcp $opt_values $opt_so $opt_devices $opt_month $opt_year $opt_SA $opt_Report $opt_Prov );
+use vars qw( $opt_h $opt_v $opt_u $opt_f $opt_t $opt_all $opt_summary $opt_e $opt_temp $opt_fan $opt_flightstates $opt_auth $opt_stats $opt_start $opt_end $opt_pings $opt_dhcp $opt_values $opt_so $opt_devices $opt_month $opt_year $opt_SA $opt_Report $opt_Prov $opt_kml );
 use Getopt::Mixed;
-Getopt::Mixed::getOptions("h v u f=s e t all summary temp fan flightstates auth stats start=s end=s pings dhcp values so devices month=s year=s SA Report Prov ");
+Getopt::Mixed::getOptions("h v u f=s e t all summary temp fan flightstates auth stats start=s end=s pings dhcp values so devices month=s year=s SA Report Prov kml ");
 
 
 # Make it easier
@@ -54,6 +54,7 @@ if ( $opt_h ) {
   print " -e = Show Display known \"error related lines\"\n";
   print " --flightstates = Show changes in flight states\n";
   print " --stats = Show ATG Stats/Versions\n";
+  print " --kml = Generate Google-Earth KML file\n";
   print "\n";
   print "Options: \n";
   print " --values = Display hard coded values.\n";
@@ -80,7 +81,7 @@ if ( $opt_h ) {
   exit 0;
 }
 
-
+my $KML=1 if ( $opt_kml );
 
 #
 # Declare Variables
@@ -89,6 +90,8 @@ if ( $opt_h ) {
 my $Verbose=$opt_v;
 #
 my $User=$ENV{"LOGNAME"};
+my $DateStart;
+my $DateEnd;
 #
 # Defining values for min/max's as spesified by Engr.
 my $BlessedATG="2.3";
@@ -106,6 +109,8 @@ my $MinFanString="";
 my $FlightMinFanString="";
 my $PingATGReset=0;  
 my $FlightPingATGReset=0;  
+my $LastPacketLoss=0;
+my $LastLatency=99999;
 my $PowerATGReset=0;  
 my $FlightPowerATGReset=0;  
 # Temp
@@ -127,7 +132,11 @@ my $FlightFanErrors=0;
 
 #
 # Define Valid Tail/Aircard verion matches as provided by Engr
-my %ValidPairs=&Define_Pairs;;
+my %Towers;
+   &Define_Towers;
+my %ValidPairs=&Define_Pairs;
+my @DRCValues=(38.4,38.4,76.8,153.6,307.2,307.2,614.4,614.4,921.6,1228.8,1228.8,1843.2,2457.6,1536,3072,0,460.8,614.4,768,921.6,1075.2,1228.8,1843.2,2150.4,2457.6,3686.4,4300.8,4915.2);
+
 #
 my $Line;
 my $Tail;
@@ -174,10 +183,17 @@ my $SINRBad=0;
 my $CoW="false";
 my $CoWINIT="false";
 my @Devices;
+my $DateRange;
+my $LastLat="undefined";
+my $LastLon="undefined";
+my $LastAlt="undefined";
+my $LastCell="undefined";
+my $LastSector="undefined";
 
 # Ping Stats
 my @Pings;
 my $PingCount=0;
+my $TotalPingCount=0;
 my $AVGPacketLoss=0;
 my $MinLatency=99999999;
 my $AVGLatency=0;
@@ -186,7 +202,10 @@ my $MaxLatency=0;
 my $TotalMinLatency=999999999;
 my $TotalAVGLatency=0;
 my $TotalMaxLatency=0;
-my $TotalPingCount=0;
+my @TotalDRC;
+my @TotalSINR;
+my $TotalDRC=0;
+my $TotalSINR=0;
 
 #
 # X-Pol status tests
@@ -213,6 +232,13 @@ my $Last_QoS_Fail_Test;
 my $Last_Repeat;
 my $Last_Repeat_Test;
 my $Repeats;
+
+#
+# Stuff for KML
+# 
+my @AirlinkData;
+my @RebootData;
+
 
 #
 # 8K Specifics
@@ -363,22 +389,6 @@ while(<INPUT>) {
 
   my $TestDate=$1;
 
-  # Lets check our Date Range
-  if ( ( $ParseStart eq "T" ) || ( $ParseEnd eq "T" ) ) {
-    $Date1=ParseDate("$TestDate");
-  }
-  #
-  if ( (  $opt_start ) && ( $ParseStart eq "T" ) ) {
-    my $Begin=Date_Cmp($Date1, $Date2);
-    next if ( $Begin < 0 );
-    $ParseStart="F";
-  }
-  if ( (  $opt_end ) && ( $ParseEnd eq "T" ) ) {
-    my $Finish=Date_Cmp($Date3, $Date2);
-    next if ( $Finish < 0 );
-    $ParseEnd="F";
-  }
-
   # Lets throw away known 'noise'
   # The ATG was just reset, we call that separately so these are trash
   next if ( $Line =~ /Coverage -> false FLIGHT STATE -> null$/ );
@@ -404,7 +414,6 @@ while(<INPUT>) {
   &Process_SBB_Link("$Line") if ( $Line =~ / SBB_LINK_\w+$/);
   &Process_ACID("$Line") if ( $Line =~ /ACID: ACM MAC Address: acidValFromScript/);
   &Process_ACID2("$Line") if ( $Line =~ /ACID: Value parsed successfully:/);
-  &Process_ACM_Status("$Line") if ( $Line =~ /downloadFileFromACM\(\): ConfigurationModuleConstants.ACM_CONNECTED_STATUS/);
   &Process_Ping_Test("$Line") if ( $Line =~ /Reset Count: 1 Ping failure: 5/);
   &Process_Ping_Test2("$Line") if ( $Line =~ /ICMP ping to AAA server is failed/);
   &Process_Ping_Latency_16_1("$Line") if ( $Line =~ /Ping result:/);
@@ -414,7 +423,8 @@ while(<INPUT>) {
   &Process_Power_Reset("$Line") if ( $Line =~ /Last reset/);
   &Process_Link_Down("$Line") if ( $Line =~ /atgLink[Down|Up]/);
   &Process_Authentication_Status("$Line") if ( $Line =~ /Authentication Status/);
-  &Process_unexpected_RCODE("$Line") if ( $Line =~ /unexpected RCODE \(.*\) resolving/);
+  #This conflict was supposedly removed
+  #&Process_unexpected_RCODE("$Line") if ( $Line =~ /unexpected RCODE \(.*\) resolving/);
   &Process_new_subnet_mask("$Line") if ( $Line =~ /new_subnet_mask/);
   &Process_2_3_TimeError("$Line") if ( $Line =~ /rebootReason : System Time and GPS Time/);
   &Process_Temp("$Line")  if ( $Line =~ /PCS Power Supply Temp/ );
@@ -425,8 +435,13 @@ while(<INPUT>) {
   &Process_Key_Feature_Start("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getStartDate/);
   &Process_Key_Feature_End("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getEndDate/);
   # Did we write out the config files correctly?
+  &Process_ACM_Status("$Line") if ( $Line =~ /downloadFileFromACM\(\): ConfigurationModuleConstants.ACM_CONNECTED_STATUS/);
+  &Process_ACM_File_Read("$Line") if ( $Line =~ /ACM: In DownLoad: listACMFiles: No. of Files in ACM is: /);
   &Process_ACM_Fail("$Line")  if ( $Line =~ /SW_KEYS: AbsControlServiceImpl: uploadKeysAMFDataToACM\(\): uploadKeysAMFFile : FALSE/);
   &Process_ACM_Read_Fail("$Line")  if ( $Line =~ /ACM: In DownLoad: listACMFiles: Unable to Read the ACM/);
+  &Process_ACM_Read_Fail_2_1("$Line")  if ( $Line =~ /FTP Connection Successful with Configuration Module. No. of Files in ACM is :/);
+  # Get KML Data
+  &Process_Airlink("$Line") if ( / Airlink: / );
 
   #
   # 8K Specific Matches
@@ -455,6 +470,7 @@ while(<INPUT>) {
   &Process_DHCP_DHCPACK("$Line") if ( $Line =~ /DHCPACK on/ );
 }
 
+&Calculate_Signals if ( $KML );
 &Show_Flight_States if ( $opt_flightstates );
 &Display_Stats if ( $opt_stats );
 &Display_Errors if ( $opt_e );
@@ -464,6 +480,7 @@ while(<INPUT>) {
 &Display_SA if ( $opt_SA );
 &Display_Report if ( $opt_Report );
 &Display_Provisioning if ( $opt_Prov );
+&Create_KML if ( $KML );
 
 # Nothing to see below here, move along citizen. 
 exit 0;
@@ -514,7 +531,10 @@ sub Display_Stats {
   $Tail="unknown" if ( ! $Tail );
   $ACID="unknown" if ( ! $ACID );
   print "\n";
+  $DateEnd =~ m,(\d+)/(\d+)/(\d+),;
+  my $DateEnd2=$1.$2.$3;
   print "Final Tail Log Stats:\n";
+  print "  Flight Charts available at http://performance.aircell.prod/reports/catalog/index.cgi?rm=details&tail=$Tail&date=$DateEnd2 \n";
   print "  ATG Tail : $Tail\n";
   print "  ATG ACID : $ACID\n";
   print "  This tail is in Debug mode\n" if ( $DebugMode );
@@ -677,10 +697,22 @@ sub Display_Stats {
 
 sub Process_NetOps_Notes {
   my $NoteLine=$_[0];
+#     Extracting Tail 11286 Starting with 2015/04/01 10:00:00 through 2015/04/10 22:00:00 to /tmp/highlander-rharris.log 
   if ( $NoteLine =~ /Extracting Tail \w+ Starting/ ) {
-    $NoteLine =~ /Extracting Tail (\w+) Starting/;
-
+    $NoteLine =~ /Extracting Tail (\w+) Starting with (.*) through (.*) to/;
+   
     $Tail=$1;
+    $DateStart=$2;
+    $DateEnd=$3;
+#print "\$NoteLine :$NoteLine:\n";
+#print "\$Tail :$Tail:\n";
+#print "\$DateStart :$DateStart:\n";
+#print "\$DateEnd :$DateEnd:\n";
+      $DateStart =~ s/ /_/g;
+      $DateEnd =~ s/ /_/g;
+    $DateRange=$DateStart."-".$DateEnd;
+    $DateRange =~ s,/,,g;
+    $DateRange =~ s,:,,g;
   } elsif ( $NoteLine =~ /Extracting logs for tail \w+/ ) {
 
     $NoteLine =~ /Extracting logs for tail (\w+)/;
@@ -695,6 +727,8 @@ sub Process_NetOps_Notes {
 
 
 sub Display_XPol {
+  print "Total Average DRC for this Flight:  $TotalDRC\n";
+  print "Total Average SINR for this Flight:  $TotalSINR\n";
   my $XPolError=0;
   my $DRCError=0;
   my $Loop;
@@ -1110,19 +1144,23 @@ sub Process_Power_Reset {
   my $StateLine=$_[0];
 
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) .* (Last reset is due.*)/;
+  my $Time=$1;
   my $Reset=$2;
 
   if ( $Coverage !~ $Reset ) {
     $Coverage=$Reset;
-    print "Pushing $1 -- $Reset\n" if ( $Verbose );
-    push(@Altitudes, "  * Power Reset        : $1 -- $Reset");
+    print "Pushing $Time -- $Reset\n" if ( $Verbose );
+    push(@Altitudes, "  * Power Reset        : $Time -- $Reset");
     $Flight_State="NULL";
     $PowerATGReset++;
     $FlightPowerATGReset++;
+    my $RebootDataLine = "$Time PowerReset: Latitude $LastLat, Longitude $LastLon, Altitude $LastAlt, LastCell $LastCell, LastSector $LastSector, LastASA $ASA";
     $Investigation{"PowerReset"}="ATG was reset $PowerATGReset times due to $Reset.";
     if ( $Reset =~ /DEBUG_HW_RST/ ) {
       $Investigation{"PowerReset"}="  * This is the result of a user using a Discrete to reset the unit.";
+      $RebootDataLine .= ", Reason: This is the result of a user using a Discrete to reset the unit.";
     }
+    push(@RebootData, $RebootDataLine);
   }
 }
 
@@ -1573,8 +1611,12 @@ sub Process_Ping_Test {
   return if ( $Flight_State ne "ABOVE_SERVICE_ALTITUDE" );
 
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) +(.*)$/;
-  push(@Altitudes, "    AAA Ping failed 1 : $1");
-
+  my $Date=$1;
+  my $PingStat=$2;
+  push(@Altitudes, "    AAA Ping failed 1 : $PingStat");
+  push(@Altitudes, "    AAA Ping failed 2 : $Date - $PingStat");
+  $LastPacketLoss="100%";
+  $LastLatency=99999;
 }
 
 sub Process_Ping_Test2 {
@@ -1584,7 +1626,11 @@ sub Process_Ping_Test2 {
   return if ( $Flight_State ne "ABOVE_SERVICE_ALTITUDE" );
 
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) +(.*)$/;
-  push(@Altitudes, "    AAA Ping failed 2 : $1");
+  my $Date=$1;
+  my $PingStat=$2;
+  push(@Altitudes, "    AAA Ping failed 2 : $Date - $PingStat");
+  $LastPacketLoss="100%";
+  $LastLatency=99999;
 }
 
 
@@ -1607,6 +1653,8 @@ sub Process_Ping_Latency_16_1 {
     $Date=$1;
     $AVGPacketLoss += 100;
     $PingCount++;
+    $LastPacketLoss="100%";
+    $LastLatency="99999";
     push(@Pings, "$Date, 100% Loss") if ( $opt_pings );
   } else {
     print "\$StateLine :$StateLine:\n" if ( $opt_v );
@@ -1626,7 +1674,8 @@ sub Process_Ping_Latency_16_1 {
     $AVGLatency += $AVGLat;
     $MaxLatency=$MaxLat if ( $MaxLatency < $MaxLat );
     $PingCount++;
-#    push(@Pings, "$StateLine") if ( $opt_pings );
+    $LastPacketLoss=$PacketLoss;
+    $LastLatency=$AVGLat;
     push(@Pings, "$Date, $PacketLoss, $MinLat, $AVGLat, $MaxLat") if ( $opt_pings );
   }
 
@@ -1653,6 +1702,7 @@ sub Process_Ping_Latency_2_1 {
     $AVGPacketLoss += 100;
     $PingCount++;
     push(@Pings, "$Date, 100% Loss") if ( $opt_pings );
+    $LastLatency="99999";
   } else {
     print "\$StateLine :$StateLine:\n" if ( $opt_v );
     print "*** Sub-100% packet Loss***\n" if ( $opt_v );
@@ -1671,7 +1721,11 @@ sub Process_Ping_Latency_2_1 {
     $AVGLatency += $AVGLat;
     $MaxLatency=$MaxLat if ( $MaxLatency < $MaxLat );
     $PingCount++;
+    $LastLatency=$AVGLat;
   }
+#print "\$StateLine :$StateLine:\n";
+#print "\$LastPacketLoss :$LastPacketLoss:\n";
+#print "\$LastLatency :$LastLatency:\n";
 
   print "\$AVGPacketLoss $AVGPacketLoss\n" if ( $opt_v );
   print "\$MinLatency $MinLatency\n" if ( $opt_v );
@@ -1813,6 +1867,37 @@ sub Process_ACM_Read_Fail {
 }
 
 
+sub Process_ACM_Read_Fail_2_1 {
+  my $StateLine=$_[0];
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) .* *FTP Connection Successful with Configuration Module. No. of Files in ACM is :(.*)/;
+
+
+  my $Date=$1;
+  my $Device=$2;
+
+  push(@Altitudes,"  ACM Read Failures!");
+  $Errors{"ACMReadFail"}="ACM Config file update failed!";
+  $Errors{"ACMReadFail-01"}="  * Found at $Date";
+  $Errors{"ACMReadFail-02"}="  * This COULD mean configuration options are corrupt or missing ( i.e. Software Keys ).";
+}
+
+sub Process_ACM_File_Read {
+  my $StateLine=$_[0];
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: - ACM: In DownLoad: listACMFiles: No. of Files in ACM is: (.*)/;
+
+  my $Date=$1;
+  my $Files=$2;
+
+  if ( $Files == 0 ) {
+    push(@Altitudes,"  ACM Config file read failed!");
+    $Errors{"ACMRead"}="ACM Config file read failed!";
+    $Errors{"ACMRead-01"}="  * Found at $Date";
+    $Errors{"ACMRead-02"}="  * We were unable to read any files from the ACM.";
+    $Errors{"ACMRead-03"}="  * Validate the ATG Configuration and Keys";
+  }
+}
+
+
 sub Process_Key_Feature {
   my $StateLine=$_[0];
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: - SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getFeature\(\)          : (.*)/;
@@ -1927,3 +2012,747 @@ sub Process_Last_Repeat {
     $Last_Repeat="";
   }
 }
+
+
+sub Process_Airlink {
+  my $Line=$_[0];
+  my $DRC; my $SINR;
+
+  # The ATG Rebooted.  No DRC, etc.
+  if ( $Line =~ /DRC_BUFFER,/ )  {
+    $Line =~ /(.*) Airlink: Latitude (.*) : Longitude (.*) : Altitude (.*)/;
+    $LastLat=$2;
+    $LastLon=$3;
+    $LastAlt=$4;
+    $LastCell="Reboot";
+    $LastSector="Reboot";
+  } else {
+    $Line =~ /(.*) Airlink: Latitude (.*) : Longitude (.*) : Altitude (.*), DRC_BUFFER (.*), BEST_ASP_SINR_BUFFER (.*) , PILOT_PN_ASP .*, Tx_AGC .*, Rx_AGC0 .*, Rx_AGC1 .*, Cell (\d+), Sector (\d+)/;
+    $LastLat=$2;
+    $LastLon=$3;
+    $LastAlt=$4;
+    $DRC=$5;
+    $SINR=$6;
+    $LastCell=$7;
+    $LastSector=$8;
+  }
+
+  push(@TotalDRC, $DRC);
+  push(@TotalSINR, $SINR);
+
+  $Line.=", LastPacketLoss $LastPacketLoss, LastLatency $LastLatency";
+  push(@AirlinkData, $Line);
+}
+
+
+sub Calculate_Signals {
+  my $LoopCount;
+  my $DRCV;
+  my $SINRV;
+
+  $LoopCount=0;
+  foreach my $Loop ( @TotalDRC ) {
+    next if ( ! $Loop );
+    my @DRC=split(' ',$Loop);
+    for my $D (@DRC) {
+      $DRCV += $DRCValues[$D];
+      $LoopCount++;
+    }
+  }
+  $TotalDRC=($DRCV/$LoopCount);
+
+  $LoopCount=0;
+  foreach my $Loop ( @TotalSINR ) {
+    next if ( ! $Loop );
+    my @SINR=split(' ',$Loop);
+    for my $S (@SINR) {
+      $SINRV += $S;
+      $LoopCount++;
+    }
+  }
+  $TotalSINR=($SINRV/$LoopCount);
+}
+
+
+sub Create_KML {
+
+  my $Date=$Start."-".$End;
+  my $TargetFile="/var/www/html/KML/InfOps_".$Tail."-".$DateRange.".kml";
+  my $TargetFileURL="http://10.241.1.132/KML/InfOps_".$Tail."-".$DateRange.".kml";
+  my $Time; my $Lat; my $Lon; my $Alt; my $DRC; my $SINR; my $Cell; my $Sector;
+  my $PPN; my $TxA; my $RxA0; my $RxA1;
+  my $IconScale;
+  my $LabelScale;
+  
+
+  print "Creating KML file $TargetFileURL\n";
+  open(OUTPUT, ">$TargetFile") or die "Can't open $TargetFile :$?: :$!:\n";
+
+  # Print Header Info
+  print OUTPUT "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
+  print OUTPUT "<kml xmlns=\"http://www.opengis.net/kml/2.2\">\n";
+  
+  # Start the Doc
+  print OUTPUT "<Document>\n";
+  
+  print OUTPUT "  <name>Flight of $Tail on $Date</name>\n";
+
+  # Define Icon Styles
+  $IconScale=0.8;
+  $LabelScale=1.0;
+  # Define the Styles ( which go in the MAPS ) for Airlink Data
+  # UNKNOWN
+  print OUTPUT "  <Style id=\"BA-Style-Unknown-Visible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>00000000</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>$LabelScale</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  #
+  print OUTPUT "  <Style id=\"BA-Style-Unknown-InVisible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>00000000</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>0</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  # Red
+  print OUTPUT "  <Style id=\"BA-Style-Red-Visible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF0000FF</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>$LabelScale</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  #
+  print OUTPUT "  <Style id=\"BA-Style-Red-InVisible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF0000FF</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>0</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  # Yellow
+  print OUTPUT "  <Style id=\"BA-Style-Yellow-Visible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF00FFFF</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>$LabelScale</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  #
+  print OUTPUT "  </Style>\n";
+  print OUTPUT "  <Style id=\"BA-Style-Yellow-InVisible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF00FFFF</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>0</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  # Green
+  print OUTPUT "  <Style id=\"BA-Style-Green-Visible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF00FF00</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>$LabelScale</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  #
+  print OUTPUT "  <Style id=\"BA-Style-Green-InVisible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF00FF00</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>0</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  # Define Maps for the Colors
+  # Unknown
+  print OUTPUT "  <StyleMap id=\"BA-Style-Unknown-Map\">\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>highlight</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Unknown-Visible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>normal</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Unknown-InVisible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "  </StyleMap>\n";
+  # Red
+  print OUTPUT "  <StyleMap id=\"BA-Style-Red-Map\">\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>highlight</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Red-Visible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>normal</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Red-InVisible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "  </StyleMap>\n";
+  # Yellow
+  print OUTPUT "  <StyleMap id=\"BA-Style-Yellow-Map\">\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>highlight</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Yellow-Visible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>normal</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Yellow-InVisible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "  </StyleMap>\n";
+  # Green
+  print OUTPUT "  <StyleMap id=\"BA-Style-Green-Map\">\n";
+  print OUTPUT "  <Pair>\n";
+  print OUTPUT "    <key>highlight</key>\n";
+  print OUTPUT "    <styleUrl>#BA-Style-Green-Visible</styleUrl>\n";
+  print OUTPUT "  </Pair>\n";
+  print OUTPUT "  <Pair>\n";
+  print OUTPUT "    <key>normal</key>\n";
+  print OUTPUT "    <styleUrl>#BA-Style-Green-InVisible</styleUrl>\n";
+  print OUTPUT "  </Pair>\n";
+  print OUTPUT "</StyleMap>\n";
+
+  foreach my $Loop ( @AirlinkData ) {
+    my @SINR;
+    my $SINRV;
+    my $ASINR;
+    my @DRC;
+    my $DRCV;
+    my $ADRC;
+#    my $Aircraft;
+    my $AircraftColor="Unknown";
+#print "\$Loop :$Loop:\n";
+    if ( $Loop =~ /Airlink: Lat/ ) {
+      # ATG Rebooted.  Compensate
+      if ( $Loop =~ /DRC_BUFFER,/ ) {
+        $Loop =~ /(.*) Airlink: Latitude (.*) : Longitude (.*) : Altitude (.*)/;
+
+        $Time=$1;
+        $Lat=$2;
+        $Lon=$3;
+        $Alt=$4;
+        $DRC="Rebooted";
+        $SINR="Rebooted";
+        $PPN="Rebooted";
+        $TxA="Rebooted";
+        $RxA0="Rebooted";
+        $RxA1="Rebooted";
+        $Cell="Rebooted";
+        $Sector="Rebooted";
+        $LastPacketLoss="Rebooted";
+        $LastLatency="Rebooted";
+        $ADRC="Rebooted";
+        $ASINR="Rebooted";
+        $AircraftColor="Red";
+      } else {
+        $Loop =~ /(.*) Airlink: Latitude (.*) : Longitude (.*) : Altitude (.*), DRC_BUFFER (.*), BEST_ASP_SINR_BUFFER (.*) , PILOT_PN_ASP (.*), Tx_AGC (.*), Rx_AGC0 (.*), Rx_AGC1 (.*), Cell (\d+), Sector (\d+), LastPacketLoss (.*), LastLatency (.*)/;
+
+        $Time=$1;
+        $Lat=$2;
+        $Lon=$3;
+        $Alt=$4;
+        $DRC=$5;
+        $SINR=$6;
+        $PPN=$7;
+        $TxA=$8;
+        $RxA0=$9;
+        $RxA1=$10;
+        $Cell=$11;
+        $Sector=$12;
+        $LastPacketLoss=$13;
+        $LastLatency=$14;
+        # Calculate the Average DRC for the update
+        @DRC=split(' ',$DRC);
+        for my $D (@DRC) {
+          $DRCV += $DRCValues[$D];
+        }
+        $ADRC=($DRCV/($#DRC +1));
+        @SINR=split(' ',$SINR);
+        for my $S (@SINR) {
+          $SINRV += $S;
+        }
+        # Calculate the Average SINR for the update
+        $ASINR=($SINRV/($#SINR +1));
+        if ( $ASINR < 0 ) {
+          $AircraftColor="Red";
+        } elsif ( ( $ASINR >= 0 ) &&  ( $ASINR < 6 ) ) {
+          $AircraftColor="Yellow";
+        } elsif ( $ASINR >= 6 ) {
+          $AircraftColor="Green";
+        }
+      }
+    } else {
+      $Loop =~ /(\d\d\d\d\-\d\d\-\d\d \d\d:\d\d:\d\d,\d+) Airlink: .*Aircard Latitude (.*) : Longitude (.*) : Altitude (.*), DRC_BUFFER (.*), BEST_ASP_SINR_BUFFER (.*), PILOT_PN_ASP (.*), Tx_AGC (.*), Rx_AGC0 (.*), Rx_AGC1 (.*), Cell (\d+), Sector (\d+), LastPacketLoss (.*), LastLatency (.*)/;
+      $Time=$1;
+      $Lat=$2;
+      $Lon=$3;
+      $Alt=$4;
+      $DRC=$5;
+      $SINR=$6;
+      $PPN=$7;
+      $TxA=$8;
+      $RxA0=$9;
+      $RxA1=$10;
+      $Cell=$11;
+      $Sector=$12;
+      $LastPacketLoss=$13;
+      $LastLatency=$14;
+    }
+
+    print OUTPUT "  <Placemark>\n";
+    my ( $FlightDate, $TS )=split(' ', $Time); 
+    my ( $TSShort, undef )=split(',', $TS);
+    $FlightDate =~ m,(\d+)-(\d+)-(\d+),;
+    my $FlightDate2=$1.$2.$3;
+ 
+    print OUTPUT "    <styleUrl>#BA-Style-".$AircraftColor."-Map</styleUrl>\n";
+    print OUTPUT "    <name>$TSShort</name>\n";
+    print OUTPUT "    <ExtendedData>\n";
+    print OUTPUT "      <Data name=\"Time\">\n";
+    print OUTPUT "        <value>$Time</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Lat\">\n";
+    print OUTPUT "        <value>$Lat</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Lon\">\n";
+    print OUTPUT "        <value>$Lon</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Alt\">\n";
+    print OUTPUT "        <value>$Alt</value>\n";
+    print OUTPUT "      </Data>\n";
+#    print OUTPUT "      <Data name=\"Last Packet Loss\">\n";
+#    print OUTPUT "        <value>$LastPacketLoss</value>\n";
+#    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Last Latency\">\n";
+    print OUTPUT "        <value>$LastLatency</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Avg DRC This Ping\">\n";
+    print OUTPUT "        <value>$ADRC ( Flight: $TotalDRC )</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Raw DRC Reported\">\n";
+    print OUTPUT "        <value>$DRC</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Avg SINR This Ping\">\n";
+    print OUTPUT "        <value>$ASINR ( Flight $TotalSINR )</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Raw SINR Reported\">\n";
+    print OUTPUT "        <value>$SINR</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"PILOT_PN_AS_ASP\">\n";
+    print OUTPUT "        <value>$PPN</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Tx_AGC\">\n";
+    print OUTPUT "        <value>$TxA</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Rx_AGC0\">\n";
+    print OUTPUT "        <value>$RxA0</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Rx_AGC1\">\n";
+    print OUTPUT "        <value>$RxA1</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Cell\">\n";
+    my $Tower;
+    if ( $Towers{$Cell} ) {
+      $Tower=$Towers{$Cell};
+    } else {
+      $Tower="Undefined";
+    }
+    print OUTPUT "        <value>$Cell ( $Tower )</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Sector\">\n";
+    print OUTPUT "        <value>$Sector</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Flight Charts:\">\n";
+    #my $FlightChart="http://performance.aircell.prod/reports/catalog/index.cgi?rm=details&tail=$Tail&date=$FlightDate2";
+    my $FlightChart="&lt;a href=&quot;http://performance.aircell.prod/reports/catalog/index.cgi?rm=details&amp;tail=$Tail&amp;date=$FlightDate2&quot;&gt;View Charts&lt;/a&gt;&lt;br/&gt;&lt;br /&gt;";
+
+#http://performance.aircell.prod/reports/catalog/index.cgi?rm=details&tail=$Tail&date=$FlightDate2";
+
+    print OUTPUT "        <value>$FlightChart</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "    </ExtendedData>\n";
+    print OUTPUT "    <Point>\n";
+    print OUTPUT "      <coordinates>$Lon,$Lat,$Alt</coordinates>\n";
+    print OUTPUT "    </Point>\n";
+    print OUTPUT "  </Placemark>\n";
+  }
+  # Define the Styles ( which go in the MAPS ) for Reboots
+  # UNKNOWN
+  print OUTPUT "  <Style id=\"BA-Style-Reboot-Visible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF0000FF</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>http://maps.google.com/mapfiles/kml/pal3/icon39.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>$LabelScale</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  #
+  print OUTPUT "  <Style id=\"BA-Style-Reboot-InVisible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF0000FF</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>http://maps.google.com/mapfiles/kml/pal3/icon39.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>0</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  # Define Maps for the Colors
+  # Unknown
+  print OUTPUT "  <StyleMap id=\"BA-Style-Reboot-Map\">\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>highlight</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Reboot-Visible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>normal</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Reboot-InVisible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "  </StyleMap>\n";
+  foreach my $Loop ( @RebootData ) {
+    $Loop =~ /(\d\d\d\d\-\d\d\-\d\d \d\d:\d\d:\d\d,\d+) PowerReset: Latitude (.*), Longitude (.*), Altitude (.*), LastCell (.*), LastSector (.*), LastASA (.*)/;
+    my $Time=$1;
+    my $Lat=$2;
+    my $Lon=$3;
+    my $Alt=$4;
+    my $Cell=$5;
+    my $Sector=$6;
+    my $ASA=$7;
+    my $ASAStatus;
+    print OUTPUT "  <Placemark>\n";
+    my ( undef, $TS )=split(' ', $Time); 
+    my ( $TSShort, undef )=split(',', $TS);
+    print OUTPUT "    <styleUrl>#BA-Style-Reboot-Map</styleUrl>\n";
+    print OUTPUT "    <name>Power Reset at $TSShort</name>\n";
+    print OUTPUT "    <ExtendedData>\n";
+    print OUTPUT "      <Data name=\"Time\">\n";
+    print OUTPUT "        <value>$Time</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"ASA Status\">\n";
+    if ( $ASA eq "T" ) {
+      $ASAStatus="True";
+    } else {
+      $ASAStatus="True";
+    }
+    print OUTPUT "        <value>$ASA</value>\n";
+    print OUTPUT "        <value>$ASAStatus</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Lat\">\n";
+    print OUTPUT "        <value>$Lat</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Lon\">\n";
+    print OUTPUT "        <value>$Lon</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Alt\">\n";
+    print OUTPUT "        <value>$Alt</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Cell\">\n";
+    my $Tower;
+    if ( $Towers{$Cell} ) {
+      $Tower=$Towers{$Cell};
+    } else {
+      $Tower="Undefined";
+    }
+    print OUTPUT "        <value>$Cell ( $Tower )</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "      <Data name=\"Sector\">\n";
+    print OUTPUT "        <value>$Sector</value>\n";
+    print OUTPUT "      </Data>\n";
+    print OUTPUT "    </ExtendedData>\n";
+    print OUTPUT "    <Point>\n";
+    print OUTPUT "      <coordinates>$Lon,$Lat,$Alt</coordinates>\n";
+    print OUTPUT "    </Point>\n";
+    print OUTPUT "  </Placemark>\n";
+  }
+
+
+
+
+  # Close the KML
+  print OUTPUT "</Document>\n";
+  print OUTPUT "</kml>\n";
+  close(OUTPUT);
+}
+
+
+sub Define_Towers {
+  %Towers= (
+	'0130' => 'AK001',
+	'0131' => 'AK002',
+	'0132' => 'AK003',
+	'0133' => 'AK004',
+	'0134' => 'AK005',
+	'0135' => 'AK006',
+	'0082' => 'AL001',
+	'0031' => 'AL002',
+	'0094' => 'AL003',
+	'0095' => 'AL004',
+	'0004' => 'AR001',
+	'0113' => 'AR002',
+	'0114' => 'AR003',
+	'0103' => 'AR004',
+	'0067' => 'AZ001',
+	'0090' => 'AZ002',
+	'0104' => 'AZ003',
+	'0021' => 'AZ004',
+	'0129' => 'AZ006',
+	'0121' => 'CA002',
+	'0012' => 'CA003',
+	'0074' => 'CA004',
+	'0034' => 'CA005',
+	'0085' => 'CA006',
+	'0170' => 'CA007',
+	'0115' => 'CA008',
+	'0062' => 'CA009',
+	'0105' => 'CA010',
+	'0029' => 'CO001',
+	'0087' => 'CO002',
+	'0058' => 'CO003',
+	'0049' => 'CO004',
+	'0088' => 'CO005',
+	'0096' => 'CO006',
+	'0155' => 'CO007',
+	'0120' => 'CO008',
+	'0054' => 'FL001',
+	'0077' => 'FL002',
+	'0064' => 'FL003',
+	'0026' => 'FL004',
+	'0106' => 'FL005',
+	'0156' => 'FL006',
+	'0220' => 'FL007',
+	'0136' => 'FL008',
+	'0193' => 'FL009',
+	'0010' => 'GA001',
+	'0048' => 'GA002',
+	'0107' => 'GA003',
+	'0108' => 'GA004',
+	'0101' => 'GA005',
+	'0007' => 'IA001',
+	'0126' => 'IA002',
+	'0148' => 'IA003',
+	'0187' => 'IA004',
+	'0020' => 'ID001',
+	'0072' => 'ID002',
+	'0092' => 'ID003',
+	'0001' => 'IL001',
+	'0102' => 'IL002',
+	'0111' => 'IL003',
+	'0144' => 'IL004',
+	'0157' => 'IL005',
+	'0005' => 'IN001',
+	'0119' => 'IN002',
+	'0110' => 'IN003',
+	'0038' => 'KS001',
+	'0039' => 'KS002',
+	'0122' => 'KS003',
+	'0123' => 'KS004',
+	'0207' => 'KS005',
+	'0150' => 'KS006',
+	'0209' => 'KS007',
+	'0137' => 'KS008',
+	'0057' => 'KY001',
+	'0186' => 'KY002',
+	'0153' => 'KY003',
+	'0128' => 'KY004',
+	'0041' => 'LA001',
+	'0047' => 'LA002',
+	'0081' => 'LA003',
+	'0177' => 'LA004',
+	'0053' => 'MA001',
+	'0070' => 'MD001',
+	'0154' => 'MD002',
+	'0014' => 'ME001',
+	'0055' => 'MI001',
+	'0046' => 'MI002',
+	'0024' => 'MI003',
+	'0145' => 'MI004',
+	'0149' => 'MI005',
+	'0139' => 'MI006',
+	'0056' => 'MN001',
+	'0169' => 'MN002',
+	'0003' => 'MO001',
+	'0124' => 'MO002',
+	'0125' => 'MO003',
+	'0206' => 'MO004',
+	'0160' => 'MO005',
+	'0188' => 'MO006',
+	'0033' => 'MS001',
+	'0178' => 'MS002',
+	'0036' => 'MT001',
+	'0016' => 'MT002',
+	'0189' => 'MT003',
+	'0008' => 'NC001',
+	'0086' => 'NC002',
+	'0152' => 'NC003',
+	'0080' => 'ND001',
+	'0059' => 'NE001',
+	'0052' => 'NE002',
+	'0097' => 'NE003',
+	'0142' => 'NE004',
+	'0159' => 'NE005',
+	'0127' => 'NE006',
+	'0084' => 'NJ001',
+	'0028' => 'NM001',
+	'0023' => 'NM002',
+	'0063' => 'NM003',
+	'0099' => 'NM004',
+	'0161' => 'NM005',
+	'0143' => 'NM006',
+	'0151' => 'NM007',
+	'0197' => 'NM008',
+	'0051' => 'NV001',
+	'0078' => 'NV002',
+	'0065' => 'NV003',
+	'0030' => 'NV004',
+	'0172' => 'NV005',
+	'0037' => 'NY001',
+	'0083' => 'NY002',
+	'0208' => 'NY004',
+	'0042' => 'OH001',
+	'0109' => 'OH002',
+	'0158' => 'OH003',
+	'0163' => 'OH004',
+	'0271' => 'OK001',
+	'0060' => 'OK002',
+	'0116' => 'OK003',
+	'0117' => 'OK004',
+	'0098' => 'OK005',
+	'0167' => 'OK007',
+	'0022' => 'OR001',
+	'0069' => 'OR002',
+	'0050' => 'PA001',
+	'0100' => 'PA002',
+	'0183' => 'PA003',
+	'0071' => 'PA004',
+	'0168' => 'PA005',
+	'0061' => 'SC001',
+	'0015' => 'SC002',
+	'0211' => 'SC003',
+	'0194' => 'SC004',
+	'0017' => 'SD001',
+	'0009' => 'SD002',
+	'0164' => 'SD003',
+	'0190' => 'SD004',
+	'0006' => 'TN001',
+	'0091' => 'TN002',
+	'0179' => 'TN003',
+	'0213' => 'TN005',
+	'0027' => 'TX001',
+	'0043' => 'TX002',
+	'0011' => 'TX003',
+	'0166' => 'TX004',
+	'0040' => 'TX005',
+	'0032' => 'TX006',
+	'0165' => 'TX007',
+	'0182' => 'TX009',
+	'0118' => 'TX010',
+	'0112' => 'TX011',
+	'0147' => 'TX012',
+	'0184' => 'TX013',
+	'0204' => 'TX014',
+	'0076' => 'UT001',
+	'0089' => 'UT002',
+	'0035' => 'UT003',
+	'0191' => 'UT007',
+	'0173' => 'UT008',
+	'0192' => 'UT009',
+	'0079' => 'VA001',
+	'0013' => 'VA002',
+	'0210' => 'VA003',
+	'0185' => 'VA004',
+	'0181' => 'VA005',
+	'0075' => 'WA001',
+	'0045' => 'WA002',
+	'0068' => 'WA003',
+	'0019' => 'WI001',
+	'0162' => 'WI002',
+	'0140' => 'WI003',
+	'0044' => 'WV001',
+	'0093' => 'WY001',
+	'0025' => 'WY002',
+	'0018' => 'WY003',
+	'0146' => 'WY004',
+	'0203' => 'YY203',
+	'0212' => 'YY212',
+	'0244' => 'YY244',
+	'0250' => 'YY250'
+  );
+}
+
+
+
