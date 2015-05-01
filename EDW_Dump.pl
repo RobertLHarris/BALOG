@@ -173,9 +173,9 @@ exit 0;
 sub Create_Output {
    my $sths; my $sthp;
 
-  my $DBInsert="INSERT INTO ODS_LANDING.cl.LAND_CONSOLE_LOGS ( EVENT_DATE, TAIL_NBR, ALTITUDE, LATITUDE, LONGITUDE, HORIZONTAL_VELOCITY, VERTICAL_VELOCITY, EVENT_NAME, EVENT_VALUE_NUMBER, EVENT_VALUE_TEXT) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? );";
+  my $DBInsert="INSERT INTO ODS_LANDING.cl.LAND_CONSOLE_LOGS ( EVENT_DATE, TAIL_NBR, ALTITUDE, LATITUDE, LONGITUDE, HORIZONTAL_VELOCITY, VERTICAL_VELOCITY, EVENT_NAME, EVENT_VALUE_NUMBER, EVENT_VALUE_TEXT ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? );";
   # Best not to use this
-  #my $DBInsert="INSERT INTO ODS_LANDING.cl.LAND_CONSOLE_LOGS WITH (TABLOCK ) ( EVENT_DATE, TAIL_NBR, ALTITUDE, LATITUDE, LONGITUDE, HORIZONTAL_VELOCITY, VERTICAL_VELOCITY, EVENT_NAME, EVENT_VALUE_NUMBER, EVENT_VALUE_TEXT) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? );";
+  #my $DBInsert="INSERT INTO ODS_LANDING.cl.LAND_CONSOLE_LOGS WITH (TABLOCK ) ( EVENT_DATE, TAIL_NBR, ALTITUDE, LATITUDE, LONGITUDE, HORIZONTAL_VELOCITY, VERTICAL_VELOCITY, EVENT_NAME, EVENT_VALUE_NUMBER, EVENT_VALUE_TEXT ) VALUES ( ?, ?, ?, ?, ?, ?, ?, ?, ?, ? );";
 
   if ( ! $opt_D ) {
     # We can save time/effort and prepare the Insert early then substitude on the loop
@@ -204,6 +204,19 @@ sub Create_Output {
     $Var8 =~ s/^ +//; $Var8 =~ s/ +$//;
     $Var9 =~ s/^ +// if ( $Var9 ); $Var9 =~ s/ +$// if ( $Var9 );
     $Var10 =~ s/^ +// if ( $Var10 ); $Var10 =~ s/ +$// if ( $Var10 );
+  #  $Var9 = 0 if ( ! $Var9 );
+  #  $Var10 = "" if ( ! $Var10 );
+
+  #  print "\$Var1 :$Var1:\n";
+  #  print "\$Var2 :$Var2:\n";
+  #  print "\$Var3 :$Var3:\n";
+  #  print "\$Var4 :$Var4:\n";
+  #  print "\$Var5 :$Var5:\n";
+  #  print "\$Var6 :$Var6:\n";
+  #  print "\$Var7 :$Var7:\n";
+  #  print "\$Var8 :$Var8:\n";
+  #  print "\$Var9 :$Var9:\n";
+  #  print "\$Var10 :$Var10:\n";
 
     if ( ! $opt_D ) {
       $sths->execute($Var1,$Var2,$Var3,$Var4,$Var5,$Var6,$Var7,$Var8,$Var9,$Var10) || die "Couldn't execute statement: ".$sths->errstr." on $Loop\n" if ( $opt_S );
