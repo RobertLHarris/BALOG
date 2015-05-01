@@ -17,6 +17,7 @@ use vars qw( $opt_h $opt_v $opt_f $opt_T $opt_S $opt_P $opt_B $opt_D $opt_hash $
 use Getopt::Mixed;
 Getopt::Mixed::getOptions("h v S P B D hash=s time month=s ");
 
+my @MonthDays=(0,31,28,31,30,31,30,31,31,30,31,30,31);
 
 if ( $opt_h ) {
   print "\n\n";
@@ -270,14 +271,14 @@ sub Process_Tails {
     if ( $#FC > 15 ) {
       while (my @Small_Array = splice @DoMe, 0, $Small_Loop ) {
         $DoMe=join(',', @Small_Array );
-        print "/usr/local/bin/Extract_ONE_Log.pl --so $LogTypes -T $Loop -m $Month --sd 01 --fd 31 --fc $DoMe | /usr/local/bin/EDW_Dump.pl $Target -T $Loop -f -\n" if ( $DryRun );
-        system("/usr/local/bin/Extract_ONE_Log.pl --so $LogTypes -T $Loop -m $Month --sd 01 --fd 31 --fc $DoMe | /usr/local/bin/EDW_Dump.pl $Target -T $Loop -f -") if ( ! $DryRun );
+        print "/usr/local/bin/Extract_ONE_Log.pl --so $LogTypes -T $Loop -m $Month --sd 01 --fd $MonthDays[$Month] --fc $DoMe | /usr/local/bin/EDW_Dump.pl $Target -T $Loop -f -\n" if ( $DryRun );
+        system("/usr/local/bin/Extract_ONE_Log.pl --so $LogTypes -T $Loop -m $Month --sd 01 --fd $MonthDays[$Month] --fc $DoMe | /usr/local/bin/EDW_Dump.pl $Target -T $Loop -f -") if ( ! $DryRun );
         undef( @Small_Array );
       }
     }  else {
       $DoMe=join(',', @DoMe);
-      print "/usr/local/bin/Extract_ONE_Log.pl --so $LogTypes -T $Loop -m $Month --sd 01 --fd 31 --fc $DoMe | /usr/local/bin/EDW_Dump.pl $Target -T $Loop -f -\n" if ( $DryRun );
-      system("/usr/local/bin/Extract_ONE_Log.pl --so $LogTypes -T $Loop -m $Month --sd 01 --fd 31 --fc $DoMe | /usr/local/bin/EDW_Dump.pl $Target -T $Loop -f -") if ( ! $DryRun );
+      print "/usr/local/bin/Extract_ONE_Log.pl --so $LogTypes -T $Loop -m $Month --sd 01 --fd $MonthDays[$Month] --fc $DoMe | /usr/local/bin/EDW_Dump.pl $Target -T $Loop -f -\n" if ( $DryRun );
+      system("/usr/local/bin/Extract_ONE_Log.pl --so $LogTypes -T $Loop -m $Month --sd 01 --fd $MonthDays[$Month] --fc $DoMe | /usr/local/bin/EDW_Dump.pl $Target -T $Loop -f -") if ( ! $DryRun );
     }
 
     foreach $ProcessedLoop ( @FC ) {
