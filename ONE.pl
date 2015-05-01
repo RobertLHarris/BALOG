@@ -2095,7 +2095,7 @@ sub Create_KML {
   # Start the Doc
   print OUTPUT "<Document>\n";
   
-  print OUTPUT "  <name>Flight of $Tail on $Date</name>\n";
+  print OUTPUT "  <name>Flight of $Tail on $DateStart</name>\n";
 
   # Define Icon Styles
   $IconScale=0.8;
