@@ -47,6 +47,7 @@ my $HaveDrift=0;
 my $DriftChange=0;
 my $Drift="0";
 my $DriftLast="1";
+my $LastDrift="1";
 my $Year; my $Mon; my $Day; my $Hour; my $Min; my $Sec; my $Mili;
 my $year; my $month; my $day; my  $hour; my $min; my $sec;
 # 
@@ -392,6 +393,14 @@ sub ImportATGConsoleFiles {
       $Line=$TimeStamp." Console: ".$Message;
       
       push(@LogLines, $Line);
+    
+      # Log changes to Drift
+      my $DriftChange=$Drift-$LastDrift;
+      if ( abs($DriftChange) > 60 ) {
+        my $DriftLine="$TimeStamp Drift: $Drift";
+        push(@LogLines, $DriftLine);
+        $LastDrift=$Drift;
+      }
     }
     print "Loaded $FileLineCount lines.\n" if ( $Verbose );
   }
@@ -700,23 +709,26 @@ sub Process_GPS_Time {
   $HaveDrift=1;
   my $Drift=&GPS_Time_Diff("$GPS_Line");
 
-  $NetOpsNotes{"0002-ATG GPS Time Entry"}=$GPS_Line;
-  $NetOpsNotes{"0003-ATG GPS"}="Compensating for drift";
-
-  my $TimeLine = "ATG Time off by $Drift seconds";
-
-  if ( $Drift ne $DriftLast ) {
-    if ( $opt_drift ) {
-      $NetOpsNotes{"0004-$DriftChange-ATG GPS Time Differential"}=$TimeLine;
-    } else {
-      $NetOpsNotes{"0004-ATG GPS Time Differential"}="Drift changed $DriftChange times.  Last value $TimeLine";
+  my $DriftChange=$Drift-$DriftLast;
+  if ( abs($DriftChange) > 60 ) {
+    $NetOpsNotes{"0002-ATG GPS Time Entry"}=$GPS_Line;
+    $NetOpsNotes{"0003-ATG GPS"}="Compensating for drift";
+  
+    my $TimeLine = "ATG Time off by $Drift seconds";
+  
+    if ( $Drift ne $DriftLast ) {
+      if ( $opt_drift ) {
+        $NetOpsNotes{"0004-$DriftChange-ATG GPS Time Differential"}=$TimeLine;
+      } else {
+        $NetOpsNotes{"0004-ATG GPS Time Differential"}="Drift changed $DriftChange times.  Last value $TimeLine";
+      }
+      $DriftChange++;
+      $DriftChange=substr("00"."$DriftChange", -3);
+      print "Updated Drift $DriftChange : $TimeLine\n" if ( $Verbose );
+      print "  Short $Drift\n" if ( $Verbose );
+      print "  Last $DriftLast\n" if ( $Verbose );
+      $DriftLast = $Drift;
     }
-    $DriftChange++;
-    $DriftChange=substr("00"."$DriftChange", -3);
-    print "Updated Drift $DriftChange : $TimeLine\n" if ( $Verbose );
-    print "  Short $Drift\n" if ( $Verbose );
-    print "  Last $DriftLast\n" if ( $Verbose );
-    $DriftLast = $Drift;
   }
   return( $Drift );
 }
