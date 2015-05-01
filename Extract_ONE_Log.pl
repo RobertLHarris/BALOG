@@ -443,7 +443,7 @@ sub ImportATGSMFiles {
       # New Data Block.  Push the previous Line and start over
       if ( $Line =~ /\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\-*\d+\.\d+,-*\d+\.\d+,\d+/ ) {
 #                     :2015-04-02 15:34:26,37.68,-97.63,4443:
-        $Line =~ /^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\d+)/;
+        $Line =~ /^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d),/;
           $TimeStamp=$1;
         $TimeStamp=&ConvertATGSMTimeStamp( $TimeStamp );
         $PushLine="$TimeStamp Airlink: $PushLine" if ( $PushLine );
@@ -921,7 +921,7 @@ sub ConvertATGSMTimeStamp {
   my $Line=$_[0];
   my $Time;
 
-  $Line =~ /^(\d\d\d\d)-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d,\d+)/;
+  $Line =~ /^(\d\d\d\d)-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/;
 
   # - 2015-04-02 15:34:26,37.68,-97.63,4443
   #print "\$Line :$Line:\n";
@@ -933,13 +933,11 @@ sub ConvertATGSMTimeStamp {
   my $Min = $5;
   my $Sec = $6; 
  
-  ( $Sec, $Mili )=split(',', $Sec);
-  $Mili=substr("$Mili"."000000", 0, 6);
+  $Mili="000000";
 
   my $Date = $Year."/".$Mon."/".$Day." ".$Hour.":".$Min.":".$Sec;
 
   $Mon=$Mon -1;
-
   $Time = timelocal($Sec,$Min,$Hour,$Day,$Mon,$Year).".".$Mili;
 
   return( $Time );
