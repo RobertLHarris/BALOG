@@ -406,8 +406,8 @@ while(<INPUT>) {
 foreach $Line ( @LogLines ) {
   # Lets handle any extraction notes first:
   &Process_NetOps_Notes("$Line") if ( $Line =~ /::NetOps Note:/ );
-  &Process_ACID("$Line") if ( $Line =~ /ACID: ACM MAC Address: acidValFromScript/);
-  &Process_ACID2("$Line") if ( $Line =~ /ACID: Value parsed successfully:/);
+  &Process_ACID("$Line") if ( $Line =~ /ACID: ACM MAC Address: acidValFromScript/ );
+  &Process_ACID2("$Line") if ( $Line =~ /ACID: Value parsed successfully:/ );
 }
 
 #
@@ -431,40 +431,44 @@ foreach $Line ( @LogLines ) {
   #
   &Process_ATGVersion("$Line") if ( $Line =~ /ATG Application Version/ );
   &Process_ATG_retrieveFiles("$Line") if ( $Line =~ /FTP  Files in ACM are : acmFileList./ );
+  &Process_ATG_Corrupt_Keys("$Line") if ( $Line =~ /keys.amf is corupted/ );
+  &Process_Keys_Installed("$Line") if ( $Line =~ /SUCCESS, Software License Key added successfully/ );
+  &Process_Keys_Deleted("$Line") if ( $Line =~ /SUCCESS, Software License Key deleted successfully/ );
+  &Process_Keys_Uploaded("$Line") if ( $Line =~ /uploadFilesToACM: Uploading FilesList:/ );
   &Process_Device_Discovered("$Line") if ( $Line =~ /AMP:.*is discovered/ );
   &Process_Device_Notify("$Line") if ( $Line =~ /Notifying my device that .* is .* because/ );
   &Process_AircardVersion("$Line") if ( $Line =~ /Aircard Version:/ );
-  &Process_CellOnWheels("$Line") if ( $Line =~ /CellOnWheels=/);
-  &Process_Authentication_Mesg("$Line") if ( $Line =~ /Authentication Message response/);
-  &Process_Coverage("$Line") if ( $Line =~ /ABS COVERAGE/);
-  &Process_Flight_State("$Line") if ( $Line =~ /Flight State \=\=\=/);
-  &Process_Flight_State_Change("$Line") if ( $Line =~ /Coverage.*FLIGHT/);
-  &Process_ATG_Link("$Line") if ( $Line =~ / ATG LINK \w+$/);
-  &Process_SBB_Link("$Line") if ( $Line =~ / SBB_LINK_\w+$/);
-  &Process_Ping_Test("$Line") if ( $Line =~ /Reset Count: 1 Ping failure: 5/);
-  &Process_Ping_Test2("$Line") if ( $Line =~ /ICMP ping to AAA server is failed/);
-  &Process_Ping_Latency_16_1("$Line") if ( $Line =~ /Ping result:/);
-  &Process_Ping_Latency_2_1("$Line") if ( $Line =~ /Conducting AAA Ping Test:./);
-  &Process_Ping_Threshold("$Line") if ( $Line =~ /PING_FAILURE_THRESHOLD...5/);
-  &Process_Signal_Strength("$Line") if ( $Line =~ /Signal Strength:/);
-  &Process_Power_Reset("$Line") if ( $Line =~ /Last reset/);
-  &Process_Link_Down("$Line") if ( $Line =~ /atgLink[Down|Up]/);
-  &Process_Authentication_Status("$Line") if ( $Line =~ /Authentication Status/);
-  &Process_new_subnet_mask("$Line") if ( $Line =~ /new_subnet_mask/);
-  &Process_2_3_TimeError("$Line") if ( $Line =~ /rebootReason : System Time and GPS Time/);
+  &Process_CellOnWheels("$Line") if ( $Line =~ /CellOnWheels=/ );
+  &Process_Authentication_Mesg("$Line") if ( $Line =~ /Authentication Message response/ );
+  &Process_Coverage("$Line") if ( $Line =~ /ABS COVERAGE/ );
+  &Process_Flight_State("$Line") if ( $Line =~ /Flight State \=\=\=/ );
+  &Process_Flight_State_Change("$Line") if ( $Line =~ /Coverage.*FLIGHT/ );
+  &Process_ATG_Link("$Line") if ( $Line =~ / ATG LINK \w+$/ );
+  &Process_SBB_Link("$Line") if ( $Line =~ / SBB_LINK_\w+$/ );
+  &Process_Ping_Test("$Line") if ( $Line =~ /Reset Count: 1 Ping failure: 5/ );
+  &Process_Ping_Test2("$Line") if ( $Line =~ /ICMP ping to AAA server is failed/ );
+  &Process_Ping_Latency_16_1("$Line") if ( $Line =~ /Ping result:/ );
+  &Process_Ping_Latency_2_1("$Line") if ( $Line =~ /Conducting AAA Ping Test:./ );
+  &Process_Ping_Threshold("$Line") if ( $Line =~ /PING_FAILURE_THRESHOLD...5/ );
+  &Process_Signal_Strength("$Line") if ( $Line =~ /Signal Strength:/ );
+  &Process_Power_Reset("$Line") if ( $Line =~ /Last reset/ );
+  &Process_Link_Down("$Line") if ( $Line =~ /atgLink[Down|Up]/ );
+  &Process_Authentication_Status("$Line") if ( $Line =~ /Authentication Status/ );
+  &Process_new_subnet_mask("$Line") if ( $Line =~ /new_subnet_mask/ );
+  &Process_2_3_TimeError("$Line") if ( $Line =~ /rebootReason : System Time and GPS Time/ );
   &Process_Temp("$Line")  if ( $Line =~ /PCS Power Supply Temp/ );
-  &Process_Fan_RPM("$Line") if ( $Line =~ /Fan is .* with rpm/);
+  &Process_Fan_RPM("$Line") if ( $Line =~ /Fan is .* with rpm/ );
   # Process ATG SW Key Lines
-  &Process_Key_Feature("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getFeature\(\)/);
-  &Process_Key_Feature_Status("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getKeyStatus/);
-  &Process_Key_Feature_Start("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getStartDate/);
-  &Process_Key_Feature_End("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getEndDate/);
+  &Process_Key_Feature("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getFeature\(\)/ );
+  &Process_Key_Feature_Status("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getKeyStatus/ );
+  &Process_Key_Feature_Start("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getStartDate/ );
+  &Process_Key_Feature_End("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getEndDate/ );
   # Did we write out the config files correctly?
-  &Process_ACM_Status("$Line") if ( $Line =~ /downloadFileFromACM\(\): ConfigurationModuleConstants.ACM_CONNECTED_STATUS/);
-  &Process_ACM_File_Read("$Line") if ( $Line =~ /ACM: In DownLoad: listACMFiles: No. of Files in ACM is: /);
-  &Process_ACM_Fail("$Line")  if ( $Line =~ /SW_KEYS: AbsControlServiceImpl: uploadKeysAMFDataToACM\(\): uploadKeysAMFFile : FALSE/);
-  &Process_ACM_Read_Fail("$Line")  if ( $Line =~ /ACM: In DownLoad: listACMFiles: Unable to Read the ACM/);
-  &Process_ACM_Read_Fail_2_1("$Line")  if ( $Line =~ /FTP Connection Successful with Configuration Module. No. of Files in ACM is :/);
+  &Process_ACM_Status("$Line") if ( $Line =~ /downloadFileFromACM\(\): ConfigurationModuleConstants.ACM_CONNECTED_STATUS/ );
+  &Process_ACM_File_Read("$Line") if ( $Line =~ /ACM: In DownLoad: listACMFiles: No. of Files in ACM is: / );
+  &Process_ACM_FTP_Read("$Line") if ( $Line =~ /ACM: ConnectACM: Establish FTP Connection for 3 time/ );
+  &Process_ACM_Read_Fail("$Line")  if ( $Line =~ /ACM: In DownLoad: listACMFiles: Unable to Read the ACM/ );
+  &Process_ACM_Read_Fail_2_1("$Line")  if ( $Line =~ /FTP Connection Successful with Configuration Module. No. of Files in ACM is :/ );
   # Get KML Data
   &Process_Airlink("$Line") if ( $Line =~ / Airlink: / );
   # Get GGTT Data
@@ -483,11 +487,11 @@ foreach $Line ( @LogLines ) {
   #
   # Process QoS Lines
   #
-  &Process_QoS("$Line") if ( $Line =~ /Flow for QoS Profile:/);
+  &Process_QoS("$Line") if ( $Line =~ /Flow for QoS Profile:/ );
 
   # These appear to be a false positive.  Disabling until we get details from BA Eng
-#  &Process_QoS_Fail("$Line")  if ( $Line =~ /rule prio 0 protocol 800 reclassify is buggy packet dropped/);
-#  &Process_Last_Repeat("$Line")  if ( $Line =~ /ATG4K last message repeated .* times/);
+#  &Process_QoS_Fail("$Line")  if ( $Line =~ /rule prio 0 protocol 800 reclassify is buggy packet dropped/ );
+#  &Process_Last_Repeat("$Line")  if ( $Line =~ /ATG4K last message repeated .* times/ );
 
   #
   # Process ATG Messages File Information
@@ -702,6 +706,7 @@ sub Display_Stats {
   if ( scalar ( keys ( %NetOpsNote ) ) > 0 ) {
     print "NetOps Notes:\n";
     foreach $Loop ( sort ( keys ( %NetOpsNote ) ) ) {
+      next if ( $Loop =~ /XPOL_Line/ );
       print "  $NetOpsNote{$Loop}\n";
     }
     print "\n";
@@ -779,6 +784,14 @@ sub Display_XPol {
   my $Year=`date +%Y`; chomp( $Year );
   $Year=$eYear if ( $eYear );
 
+  if ( $NetOpsNote{"XPOL_Line-0"} ) {
+    print "XPOL for this timeframe only:\n";
+    @XPol=split(',', $NetOpsNote{"XPOL_Line-1"});
+    print "  Tail: $Tail  ATG Vers: $ATGVersion AvgDRC: $XPol[3]\n";
+    print "  HFwd: $XPol[4]  HAft: $XPol[6] VFwd: $XPol[8]  VAft: $XPol[10]\n";
+    print "  HFwd: $XPol[5]  HAft: $XPol[7] VFwd: $XPol[9]  VAft: $XPol[11]\n";
+    print "\n";
+  }
   my $TmpMonth;
   my $LastMonth;
   if ( $Day < 7 ) {
@@ -1857,6 +1870,63 @@ sub Process_DHCP_DHCPACK {
 }
 
 
+sub Process_Keys_Installed {
+  my $StateLine=$_[0];
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*).*/;
+
+  my $Date=$1;
+
+  push(@Altitudes,"  $Date Software License Key Installed");
+
+  if ( ! $Errors{"License_Key_Installed-01"} ) {
+    $Errors{"License_Key_Installed-01"}="$Date Software License Keys Installed";
+  }
+}
+
+
+sub Process_Keys_Deleted {
+  my $StateLine=$_[0];
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*).*/;
+
+  my $Date=$1;
+
+  push(@Altitudes,"  $Date Software License Key Deleted");
+
+  if ( ! $Errors{"License_Key_Deleted-01"} ) {
+    $Errors{"License_Key_Deleted-01"}="$Date Software License Keys Deleted";
+  }
+}
+
+
+sub Process_Keys_Uploaded {
+  my $StateLine=$_[0];
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*).*Uploading FilesList: \[(.*)\]/;
+
+  my $Date=$1;
+  my $Files=$2;
+
+  push(@Altitudes,"  $Date Software License Key Uploaded");
+
+  if ( ! $Investigation{"Keys_Uploaded-01"} ) {
+    $Investigation{"Keys_Uploaded-01"}="$Date Software License Keys Uploaded";
+  }
+}
+
+
+sub Process_ATG_Corrupt_Keys {
+  my $StateLine=$_[0];
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*).*/;
+
+  my $Date=$1;
+
+  push(@Altitudes,"  $Date keys.amf is reported corrupted");
+
+  if ( ! $Errors{"Corrupt keys.amf-01"} ) {
+    $Errors{"Corrupt keys.amf-01"}="$Date Keys.amf is corrupted";
+  }
+}
+
+
 sub Process_ATG_retrieveFiles {
   my $StateLine=$_[0];
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*).*FTP  Files in ACM are : acmFileList : \[(.*)\]/;
@@ -1876,21 +1946,6 @@ sub Process_ATG_retrieveFiles {
 }
 
 
-sub Process_ACM_Fail {
-  my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: - SW_KEYS: AbsControlServiceImpl: uploadKeysAMFDataToACM\(\): uploadKeysAMFFile : (.*)/;
-
-  my $Date=$1;
-  my $Device=$2;
-
-  push(@Altitudes,"  ACM Config file update failed!");
-  $Errors{"KeyFile"}="ACM Config file update failed!";
-  $Errors{"KeyFile-01"}="  * Found at $Date";
-  $Errors{"KeyFile-02"}="  * This COULD mean configuration options are corrupt or missing ( i.e. Software Keys ).";
-  $Errors{"KeyFile-03"}="  * Validate the ATG Configuration and Escalate to NetOps";
-}
-
-
 sub Process_ACM_Read_Fail {
   my $StateLine=$_[0];
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) .* *ACM: In DownLoad: listACMFiles: Unable to Read the ACM/;
@@ -1900,9 +1955,23 @@ sub Process_ACM_Read_Fail {
   my $Device=$2;
 
   push(@Altitudes,"  ACM Read Failures!");
-  $Errors{"ACMReadFail"}="ACM Config file update failed!";
+  $Errors{"ACMReadFail"}="ATG was unable to read the ACM Config files!";
   $Errors{"ACMReadFail-01"}="  * Found at $Date";
   $Errors{"ACMReadFail-02"}="  * This COULD mean configuration options are corrupt or missing ( i.e. Software Keys ).";
+}
+
+
+sub Process_ACM_FTP_Fail {
+  my $StateLine=$_[0];
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) .*ConnectACM: Establish FTP Connection for 3 time/;
+
+
+  my $Date=$1;
+
+  push(@Altitudes,"  ACM FTP Failure!");
+  $Errors{"ACMReadFail"}="ATG was unable to FTP to the ACM!";
+  $Errors{"ACMReadFail-01"}="  * Found at $Date";
+  $Errors{"ACMReadFail-02"}="  * This COULD mean a connectivty or ACM failure.";
 }
 
 
@@ -1912,12 +1981,14 @@ sub Process_ACM_Read_Fail_2_1 {
 
 
   my $Date=$1;
-  my $Device=$2;
+  my $Files=$2;
 
-  push(@Altitudes,"  ACM Read Failures!");
-  $Errors{"ACMReadFail"}="ACM Config file update failed!";
-  $Errors{"ACMReadFail-01"}="  * Found at $Date";
-  $Errors{"ACMReadFail-02"}="  * This COULD mean configuration options are corrupt or missing ( i.e. Software Keys ).";
+  if ( $Files < 3 ) {
+    push(@Altitudes,"  ACM Connectivity Failure!");
+    $Errors{"ACMReadFail"}="ACM Config file Download Problem!  Only saw $Files Files.";
+    $Errors{"ACMReadFail-01"}="  * Found at $Date";
+    $Errors{"ACMReadFail-02"}="  * This COULD mean configuration options are corrupt or missing ( i.e. Software Keys ).";
+  }
 }
 
 sub Process_ACM_File_Read {
