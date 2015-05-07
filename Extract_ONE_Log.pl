@@ -21,6 +21,7 @@ use POSIX 'strftime';
  
 
 my $User=$ENV{"LOGNAME"};
+my $PID=$$;
 
 # GetOpt
 use vars qw( $opt_h $opt_v $opt_F $opt_T $opt_t $opt_f $opt_so $opt_fc $opt_fm $opt_fsm $opt_year $opt_sy $opt_fy $opt_m $opt_sm $opt_fm $opt_d $opt_sd $opt_fd $opt_st $opt_ft $opt_p $opt_nocomp $opt_all $opt_console $opt_airlink $opt_gatekeeper  $opt_messages $opt_fum $opt_drift $opt_na $opt_nac $opt_nas $opt_nam );
@@ -42,6 +43,7 @@ my $Verbose=$opt_v;
 my $LastLine="";
 #
 my %NetOpsNotes;
+my @XPOL;
 # ATG Time Drift Calculations
 my $HaveDrift=0;
 my $DriftChange=0;
@@ -393,6 +395,7 @@ sub ImportATGSMFiles {
   my $TimeStamp; 
   my $Message;
   my $Lat; my $Lon; my $Alt; 
+  my $FlightXPOL=0;
   #
   $PushLine=0;
   my $Mili=0; my $MiliTmp="";
@@ -409,6 +412,7 @@ sub ImportATGSMFiles {
       next if ( /^$/ );
       next if ( /^console.log/ );
       $Line=$_;
+
 
       # Remove non-printable characters ( NOT the whole line )
       $Line =~ s/[^[:print:]]//g;
@@ -428,10 +432,15 @@ sub ImportATGSMFiles {
 
       # New Data Block.  Push the previous Line and start over
       if ( $Line =~ /\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\-*\d+\.\d+,-*\d+\.\d+,\d+/ ) {
-#                     :2015-04-02 15:34:26,37.68,-97.63,4443:
         $Line =~ /^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d),/;
           $TimeStamp=$1;
         $TimeStamp=&ConvertATGSMTimeStamp( $TimeStamp );
+        # Do we add this to the Flight XPol data?
+        if ( ( $TimeStamp > $StartStamp ) && ( $TimeStamp < $FinishStamp )) {
+          $FlightXPOL="1";
+        } else {
+          $FlightXPOL="0";
+        }
         $PushLine="$TimeStamp Airlink: $PushLine" if ( $PushLine );
         push(@LogLines, $PushLine) if ( $PushLine );
         $PushLine=0;
@@ -444,8 +453,26 @@ sub ImportATGSMFiles {
       &Process_SM_Sector_ID("$Line") if ( /^Serving_SectorID/ );
       #&Process_SM_SINR("$Line") if ( /^ASP_FILTERED_SINR/ );
       &Process_SM_SINR("$Line") if ( /^BEST_ASP_SINR_BUFFER/ );
+      push(@XPOL, $Line) if ( $FlightXPOL );
     }
     print "Loaded $FileLineCount lines.\n" if ( $Verbose );
+  }
+
+  # Get Flight Specific XPOL data
+  if ( @XPOL ) {
+    open(XPOLOUT, ">/tmp/$PID.txt");
+    foreach my $Loop (@XPOL) {
+      print XPOLOUT "$Loop\n";
+    }
+    close(XPOLOUT);
+    my $XPOLCounter=0;
+    open(XPOLIN, "/bin/cat /tmp/$PID.txt | /usr/local/bin/xpol.pl  |");
+    while(<XPOLIN>) {
+      chomp;
+      $NetOpsNotes{"XPOL_Line-$XPOLCounter"}="$_";
+      $XPOLCounter++;
+    }
+    close(XPOLIN);
   }
 }
 
