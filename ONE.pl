@@ -24,6 +24,7 @@ use vars qw( $opt_h $opt_v $opt_u $opt_f $opt_t $opt_all $opt_summary $opt_e $op
 use Getopt::Mixed;
 Getopt::Mixed::getOptions("h v u f=s e t all summary temp fan flightstates auth stats start=s end=s pings dhcp values so devices month=s year=s SA Report Prov kml ");
 
+my $GGTT_Enable=1;
 
 # Make it easier
 if ( $opt_all ) {
@@ -139,6 +140,7 @@ my @DRCValues=(38.4,38.4,76.8,153.6,307.2,307.2,614.4,614.4,921.6,1228.8,1228.8,
 
 #
 my $Line;
+my @LogLines;
 my $Tail;
 my %NetOpsNote; 
 my $Loop;my %Auths; my %AuthAddr; my %FlightAuths; my %FlightAuthAddr;
@@ -175,6 +177,7 @@ my $ASA="F";
 my $ASATime="";
 my $GoodSINR=6;
 my $SINRRatio=75;
+my $LastDrift=0;
 my $LastSINR="";
 my $LastSINRCount=0;
 my $CountMin=20;
@@ -238,7 +241,13 @@ my $Repeats;
 # 
 my @AirlinkData;
 my @RebootData;
+my @GGTTData;
+my @CallData;
 
+#
+# GGTT Parts
+#
+my $CallCount=0;
 
 #
 # 8K Specifics
@@ -376,6 +385,10 @@ if ( ( $opt_f =~ /\.tar.gz$/ ) || ( $opt_f =~ /\.tgz$/ )) {
   $OpenCommand="<$opt_f";
 }
 
+
+#
+# Get our Data
+# 
 open(INPUT, "$OpenCommand") || die "Can't open $opt_f :$?:\n";
 while(<INPUT>) {
   chomp;
@@ -385,6 +398,25 @@ while(<INPUT>) {
   next if ( $Line =~  /^$/ );
   # Temp until we know if we need the non-date stamped lines
   next unless ( (  $Line =~ /^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\d+/ ) || ( $Line =~ /::NetOps Note:/ ) );
+
+  push(@LogLines, $Line);
+}
+
+# Need these early
+foreach $Line ( @LogLines ) {
+  # Lets handle any extraction notes first:
+  &Process_NetOps_Notes("$Line") if ( $Line =~ /::NetOps Note:/ );
+  &Process_ACID("$Line") if ( $Line =~ /ACID: ACM MAC Address: acidValFromScript/);
+  &Process_ACID2("$Line") if ( $Line =~ /ACID: Value parsed successfully:/);
+}
+
+#
+# Merge in GGTT
+#
+&Get_GGTT if ( ( $GGTT_Enable ) && ( $ACID ));
+@LogLines=sort(@LogLines);
+
+foreach $Line ( @LogLines ) {
   $Line =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\d+)/;
 
   my $TestDate=$1;
@@ -393,9 +425,6 @@ while(<INPUT>) {
   # The ATG was just reset, we call that separately so these are trash
   next if ( $Line =~ /Coverage -> false FLIGHT STATE -> null$/ );
   next if ( $Line =~ /UNKNOWN_STATE$/ );
-
-  # Lets handle any extraction notes first:
-  &Process_NetOps_Notes("$Line") if ( $Line =~ /::NetOps Note:/ );
 
   #
   # Process ATG Console File Information
@@ -412,8 +441,6 @@ while(<INPUT>) {
   &Process_Flight_State_Change("$Line") if ( $Line =~ /Coverage.*FLIGHT/);
   &Process_ATG_Link("$Line") if ( $Line =~ / ATG LINK \w+$/);
   &Process_SBB_Link("$Line") if ( $Line =~ / SBB_LINK_\w+$/);
-  &Process_ACID("$Line") if ( $Line =~ /ACID: ACM MAC Address: acidValFromScript/);
-  &Process_ACID2("$Line") if ( $Line =~ /ACID: Value parsed successfully:/);
   &Process_Ping_Test("$Line") if ( $Line =~ /Reset Count: 1 Ping failure: 5/);
   &Process_Ping_Test2("$Line") if ( $Line =~ /ICMP ping to AAA server is failed/);
   &Process_Ping_Latency_16_1("$Line") if ( $Line =~ /Ping result:/);
@@ -423,12 +450,10 @@ while(<INPUT>) {
   &Process_Power_Reset("$Line") if ( $Line =~ /Last reset/);
   &Process_Link_Down("$Line") if ( $Line =~ /atgLink[Down|Up]/);
   &Process_Authentication_Status("$Line") if ( $Line =~ /Authentication Status/);
-  #This conflict was supposedly removed
-  #&Process_unexpected_RCODE("$Line") if ( $Line =~ /unexpected RCODE \(.*\) resolving/);
   &Process_new_subnet_mask("$Line") if ( $Line =~ /new_subnet_mask/);
   &Process_2_3_TimeError("$Line") if ( $Line =~ /rebootReason : System Time and GPS Time/);
   &Process_Temp("$Line")  if ( $Line =~ /PCS Power Supply Temp/ );
-  &Process_Fan_RPM($_) if (/Fan is .* with rpm/);
+  &Process_Fan_RPM("$Line") if ( $Line =~ /Fan is .* with rpm/);
   # Process ATG SW Key Lines
   &Process_Key_Feature("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getFeature\(\)/);
   &Process_Key_Feature_Status("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getKeyStatus/);
@@ -441,7 +466,11 @@ while(<INPUT>) {
   &Process_ACM_Read_Fail("$Line")  if ( $Line =~ /ACM: In DownLoad: listACMFiles: Unable to Read the ACM/);
   &Process_ACM_Read_Fail_2_1("$Line")  if ( $Line =~ /FTP Connection Successful with Configuration Module. No. of Files in ACM is :/);
   # Get KML Data
-  &Process_Airlink("$Line") if ( / Airlink: / );
+  &Process_Airlink("$Line") if ( $Line =~ / Airlink: / );
+  # Get GGTT Data
+  &Process_GGTT("$Line") if ( $Line =~ / GGTT: / );
+  # Capture Drift Changes
+  &Process_DriftLine("$Line") if ( $Line =~ / Drift: / );
 
   #
   # 8K Specific Matches
@@ -692,6 +721,15 @@ sub Display_Stats {
     print "Software Keys:\n";
     print "  * No software keys installed.\n";
   }
+
+  print "GGTT Data:\n";
+  if ( @CallData ) {
+    foreach $Loop ( sort @CallData ) {
+      print "  $Loop\n";
+    }
+  } else {
+    print "  No activity found in this time frame.\n";
+  }
 }
 
 
@@ -727,8 +765,9 @@ sub Process_NetOps_Notes {
 
 
 sub Display_XPol {
-  print "Total Average DRC for this Flight:  $TotalDRC\n";
-  print "Total Average SINR for this Flight:  $TotalSINR\n";
+  print "Total Average DRC for this Time Window:  ".sprintf("%.2f", $TotalDRC)."\n";
+  print "Total Average SINR for this Time Window: ".sprintf("%.2f", $TotalSINR)."\n";
+  print "\n";
   my $XPolError=0;
   my $DRCError=0;
   my $Loop;
@@ -1958,8 +1997,9 @@ sub Process_Key_Feature_End {
 
 sub Process_Device_Notify {
   # Waiting on descriptoing of the lines
-return unless ( /RESET/ );
   my $StateLine=$_[0];
+  return unless ( $StateLine =~ /RESET/ );
+
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*).* Notifying (.*)/;
 
   my $Date=$1;
@@ -2014,6 +2054,14 @@ sub Process_Last_Repeat {
 }
 
 
+sub Process_DriftLine {
+  my $StateLine=$_[0];
+
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Drift: (.*)/;
+  $LastDrift=$2;
+}
+
+
 sub Process_Airlink {
   my $Line=$_[0];
   my $DRC; my $SINR;
@@ -2045,21 +2093,59 @@ sub Process_Airlink {
 }
 
 
+sub Process_GGTT {
+  my $Line=$_[0];
+  my $GGTTLine;
+ 
+  $Line =~ /(.*) GGTT: Call #\d+ (\w+), SIPID (.*)/;
+
+  my $TimeStamp=$1;
+  my $Change=$2;
+  my $SIPID=$3;
+  if ( $Change =~ /Started/ ) {
+    $CallCount++;
+    $GGTTLine="$TimeStamp GGTT: LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Started $CallCount, SIPID $SIPID";
+  } elsif ( $Change =~ /Closed/ ) {
+    $CallCount--;
+    $GGTTLine="$TimeStamp GGTT: LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Closed $CallCount, SIPID $SIPID";
+  } else {
+    $GGTTLine="$TimeStamp GGTT: LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, $Change $CallCount, SIPID $SIPID";
+  }
+  push(@GGTTData, $GGTTLine);
+}
+
+
 sub Calculate_Signals {
   my $LoopCount;
   my $DRCV;
   my $SINRV;
+  my $Tmp;
 
   $LoopCount=0;
-  foreach my $Loop ( @TotalDRC ) {
-    next if ( ! $Loop );
-    my @DRC=split(' ',$Loop);
-    for my $D (@DRC) {
-      $DRCV += $DRCValues[$D];
+  if ( $ATGVersion =~ /^2.[123456789]/ ) {
+    foreach my $Loop ( @TotalDRC ) {
+      next if ( ! $Loop );
+      my @DRC=split(' ',$Loop);
+      if ( $DRC[0] == "1" ) {
+        $Tmp=$DRC[1] +16;
+      } else {
+        $Tmp=$DRC[1];
+      }
+      $DRCV += $DRCValues[$Tmp];
       $LoopCount++;
     }
+#    $TotalDRC=($DRCV/$LoopCount);
+    $TotalDRC=sprintf("%.2f", ($DRCV/$LoopCount) );
+  } else {
+    foreach my $Loop ( @TotalDRC ) {
+      next if ( ! $Loop );
+      my @DRC=split(' ',$Loop);
+      $Tmp=$DRC[0];
+      $DRCV += $DRCValues[$Tmp];
+      $LoopCount++;
+    }
+    $TotalDRC=sprintf("%.2f", ($DRCV/$LoopCount) );
   }
-  $TotalDRC=($DRCV/$LoopCount);
 
   $LoopCount=0;
   foreach my $Loop ( @TotalSINR ) {
@@ -2070,7 +2156,122 @@ sub Calculate_Signals {
       $LoopCount++;
     }
   }
-  $TotalSINR=($SINRV/$LoopCount);
+#  $TotalSINR=($SINRV/$LoopCount);
+  $TotalSINR=sprintf("%.2f", ($SINRV/$LoopCount) );
+}
+
+
+sub Get_DRC {
+  my $Tmp=$_[0];
+  my $Index;
+
+  if ( $ATGVersion =~ /^2.[123456789]/ ) {
+    my @DRC=split(' ',$Tmp);
+    if ( $DRC[0] == "1" ) {
+      $Index=$DRC[1] +16;
+    } else {
+      $Index=$DRC[1];
+    }
+  } else {
+    my @DRC=split(' ',$Tmp);
+    $Index=$DRC[0];
+  }
+  my $DRC=$DRCValues[$Index];
+
+  return( $DRC ); 
+}
+
+
+sub Get_GGTT {
+  my $TransFilesDir="/opt/log/Accuroam/";
+  my $FileBase=$TransFilesDir."trans.log.*";
+  my @ProcessMe;
+  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $TimeStamp;
+  my $PopulateCallCount=0;
+  my $SIPID;
+  my $SIPStatus;
+
+  $DateStart =~ /(\d\d\d\d\/\d\d\/\d\d)_/;
+  my $Start=$1;
+  $Start =~ s,/,,g;
+  print "Start : $DateStart : $Start\n" if ( $Verbose );
+  $DateEnd =~ /(\d\d\d\d\/\d\d\/\d\d)_/;
+  my $End=$1;
+  $End =~ s,/,,g;
+  print "Finish : $DateEnd : $End\n" if ( $Verbose );
+  open(INPUT, "ls -1rt $FileBase |");
+  while(<INPUT>) {
+    chomp;
+    my $Line=$_;
+    $Line =~ /.log.(\d\d\d\d\d\d\d\d)/;
+    my $Current=$1;
+    if (( $Start <= $Current ) && ( $Current <= $End )) {
+      push(@ProcessMe, $Line);
+    }
+  }
+  close(INPUT);
+  foreach my $Loop (@ProcessMe) {
+    print "Processing $Loop: ACID :$ACID:\n" if ( $Verbose );
+    open(INPUT, "/bin/grep $ACID $Loop |");
+    while(<INPUT>) {
+      chomp;
+      my $Line = $_;
+      if ( /,SipCall,/) {
+        my @Line=split(',', $Line);
+
+        my $DateTime=$Line[1];
+        $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
+
+        $Day=$1;
+        $Mon=$2;
+        $Year=$3;
+        $Hour=$4;
+        $Min=$5;
+        $Sec=$6;
+
+        $SIPStatus=$Line[8];
+        $SIPStatus="Started" if ( $SIPStatus eq "0200" );
+        $SIPID=$Line[9];
+
+        $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",000000";
+
+        if ( $SIPStatus eq "Started") {
+          $PopulateCallCount++;
+          print "  $TimeStamp - Added a call in $Loop. CallCount :$PopulateCallCount: SIPID :$SIPID:.\n" if ( $Verbose );
+          print "    $Line\n" if ( $Verbose );
+        } else {
+          print "  $TimeStamp - Call error $SIPStatus in $Loop. CallCount :$PopulateCallCount: SIPID :$SIPID:.\n" if ( $Verbose );
+          print "    $Line\n" if ( $Verbose );
+        }
+          #print "$TimeStamp GGTT: Call Started, SIPID $SIPID\n";
+        push(@CallData, "$TimeStamp GGTT: Call $SIPStatus, SIPID $SIPID");
+        push(@LogLines, "$TimeStamp GGTT: Call #$PopulateCallCount $SIPStatus, SIPID $SIPID");
+      }
+      if ( /,SipCallEnded,/) {
+        my @Line=split(',', $Line);
+
+        my $DateTime=$Line[1];
+        $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
+
+        $Day=$1;
+        $Mon=$2;
+        $Year=$3;
+        $Hour=$4;
+        $Min=$5;
+        $Sec=$6;
+
+        $SIPID=$Line[9];
+
+        $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",000000";
+        print "  $TimeStamp - Closed a call in $Loop CallCount :$PopulateCallCount: SIPID :$SIPID:.\n" if ( $Verbose );
+        print "    $Line\n" if ( $Verbose );
+        #push(@CallData, "$TimeStamp GGTT: Call #$PopulateCallCount Closed, SIPID $SIPID");
+        push(@CallData, "$TimeStamp GGTT: Call Closed, SIPID $SIPID");
+        push(@LogLines, "$TimeStamp GGTT: Call #$PopulateCallCount Closed, SIPID $SIPID");
+        $PopulateCallCount--;
+      }
+    }
+  }
 }
 
 
@@ -2081,9 +2282,14 @@ sub Create_KML {
   my $TargetFileURL="http://10.241.1.132/KML/InfOps_".$Tail."-".$DateRange.".kml";
   my $Time; my $Lat; my $Lon; my $Alt; my $DRC; my $SINR; my $Cell; my $Sector;
   my $PPN; my $TxA; my $RxA0; my $RxA1;
-  my $IconScale;
   my $LabelScale;
+  my $Type;
   
+  # Define Icon Styles
+  my $IconScale=0.8;
+  my $IconScaleMedium=0.9;
+  my $IconScaleLarge=1.0;
+  $LabelScale=1.0;
 
   print "Creating KML file $TargetFileURL\n";
   open(OUTPUT, ">$TargetFile") or die "Can't open $TargetFile :$?: :$!:\n";
@@ -2096,10 +2302,316 @@ sub Create_KML {
   print OUTPUT "<Document>\n";
   
   print OUTPUT "  <name>Flight of $Tail on $DateStart</name>\n";
+  print OUTPUT "  <LookAt id=\"\">\n";
+  print OUTPUT "    <altitude>1</altitude>\n";
+  print OUTPUT "    <heading>6</heading>\n";
+  print OUTPUT "    <latitude>38</latitude>\n";
+  print OUTPUT "    <longitude>-98</longitude>\n";
+  print OUTPUT "    <range>4000000</range>\n";
+  print OUTPUT "    <tilt>3</tilt>\n";
+  print OUTPUT "  </LookAt>\n";
+  print OUTPUT "  <ScreenOverlay id=\"\">\n";
+  print OUTPUT "    <Icon id=\"content\">\n";
+  print OUTPUT "      <href>http://10.241.1.70/media/legends/drc-lgd.png</href>\n";
+  print OUTPUT "    </Icon>\n";
+  print OUTPUT "    <description>drc Legend</description>\n";
+  print OUTPUT "    <name>Legend</name>\n";
+  print OUTPUT "    <overlayXY x=\"0\" xunits=\"fraction\" y=\"1\" yunits=\"fraction\" />\n";
+  print OUTPUT "    <rotationXY></rotationXY>\n";
+  print OUTPUT "    <screenXY x=\"0\" xunits=\"fraction\" y=\"1\" yunits=\"fraction\" />\n";
+  print OUTPUT "  </ScreenOverlay>\n";
+  # Moving this earlier to put on top of the Green Circles 
+  # IF GGTT selected 
+  if ( $GGTT_Enable ) {
+    print OUTPUT "  <Folder>\n";
+    print OUTPUT "    <name>GGTT Data</name>\n";
+    # Define the Styles ( which go in the MAPS ) for GGTT
+    # Call Error
+    # Red
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Error-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>https://maps.google.com/mapfiles/kml/shapes/earthquake.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Error-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>https://maps.google.com/mapfiles/kml/shapes/earthquake.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Call Started
+    # Red
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Red-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+#    print OUTPUT "          <href>http://maps.google.com/mapfiles/kml/shapes/phone.png</href>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/phone.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Red-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/phone.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Green
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Green-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF00FF00</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/phone.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScale</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Green-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF00FF00</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/phone.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScale</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Call Ended
+    # Red
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Hangup-Red-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+#    print OUTPUT "          <href>http://maps.google.com/mapfiles/kml/shapes/phone-hangup.png</href>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/phone-hangup.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Hangup-Red-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/phone-hangup.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Green
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Hangup-Green-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF00FF00</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/phone-hangup.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScale</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTT-Hangup-Green-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF00FF00</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/phone-hangup.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScale</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Define Maps for the Colors
+    # GGTT CAll
+    # Error
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTT-Error-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Error-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Error-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # Red
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTT-Red-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Red-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Red-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # Green
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTT-Green-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Green-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Green-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # GGTT Hangup
+    # Red
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTT-Hangup-Red-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Hangup-Red-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Hangup-Red-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # Green
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTT-Hangup-Green-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Hangup-Green-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTT-Hangup-Green-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    foreach my $Loop ( @GGTTData ) {
+      $Loop =~ /(.*) GGTT: LastLat (.*), LastLon (.*), LastAlt (.*), (\w+) (.*), SIPID (.*)/;
+      my $Time=$1;
+      my $Lat=$2;
+      my $Lon=$3;
+      my $Alt=$4;
+        $Alt=$Alt+100;
+      my $State=$5;
+      my $Count=$6;
+      my $SIPID=$7;
+      my $GGTTColor;
+      print OUTPUT "    <Placemark>\n";
+      my ( undef, $TS )=split(' ', $Time); 
+      my ( $TSShort, undef )=split(',', $TS);
+      if ( $Count < 3 ) {
+        $GGTTColor="Green";
+      } else {
+        $GGTTColor="Red";
+      }
+      if ( $State eq "Started" ) {
+        $Type="GGTT" 
+      } elsif ( $State eq "Closed" ) {
+        $Type="GGTT-Hangup"
+      } else {
+        $Type="GGTT-Error"
+      }
+      if ( $Type eq "GGTT-Error" ) {
+        print OUTPUT "      <styleUrl>#BA-Style-".$Type."-Map</styleUrl>\n";
+      } else {
+        print OUTPUT "      <styleUrl>#BA-Style-".$Type."-".$GGTTColor."-Map</styleUrl>\n";
+      }
+      print OUTPUT "      <name>Call $State at $TSShort CT </name>\n";
+      print OUTPUT "      <ExtendedData>\n";
+      print OUTPUT "        <Data name=\"Time\">\n";
+      print OUTPUT "          <value>$Time CT </value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Lat\">\n";
+      print OUTPUT "          <value>$Lat</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Lon\">\n";
+      print OUTPUT "          <value>$Lon</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Alt\">\n";
+      print OUTPUT "          <value>$Alt</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"SIPID \">\n";
+      print OUTPUT "          <value>$SIPID</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Call Count\">\n";
+      print OUTPUT "          <value>$Count</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "      </ExtendedData>\n";
+      print OUTPUT "      <Point>\n";
+      print OUTPUT "        <altitudeMode>absolute</altitudeMode>\n";
+      print OUTPUT "        <coordinates>$Lon,$Lat,$Alt</coordinates>\n";
+      print OUTPUT "      </Point>\n";
+      print OUTPUT "    </Placemark>\n";
+    }
+  }
+  print OUTPUT "  </Folder>\n";
 
-  # Define Icon Styles
-  $IconScale=0.8;
-  $LabelScale=1.0;
+
+  print OUTPUT "  <Folder>\n";
   # Define the Styles ( which go in the MAPS ) for Airlink Data
   # UNKNOWN
   print OUTPUT "  <Style id=\"BA-Style-Unknown-Visible\">\n";
@@ -2108,7 +2620,7 @@ sub Create_KML {
   print OUTPUT "      <Icon>\n";
   print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
   print OUTPUT "      </Icon>\n";
-  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "      <scale>$IconScaleLarge</scale>\n";
   print OUTPUT "    </IconStyle>\n";
   print OUTPUT "    <LabelStyle>\n";
   print OUTPUT "      <scale>$LabelScale</scale>\n";
@@ -2124,7 +2636,7 @@ sub Create_KML {
   print OUTPUT "      <Icon>\n";
   print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
   print OUTPUT "      </Icon>\n";
-  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "      <scale>$IconScaleLarge</scale>\n";
   print OUTPUT "    </IconStyle>\n";
   print OUTPUT "    <LabelStyle>\n";
   print OUTPUT "      <scale>0</scale>\n";
@@ -2140,7 +2652,7 @@ sub Create_KML {
   print OUTPUT "      <Icon>\n";
   print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
   print OUTPUT "      </Icon>\n";
-  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "      <scale>$IconScaleLarge</scale>\n";
   print OUTPUT "    </IconStyle>\n";
   print OUTPUT "    <LabelStyle>\n";
   print OUTPUT "      <scale>$LabelScale</scale>\n";
@@ -2156,7 +2668,39 @@ sub Create_KML {
   print OUTPUT "      <Icon>\n";
   print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
   print OUTPUT "      </Icon>\n";
-  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "      <scale>$IconScaleMedium</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>0</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  # Orange
+  print OUTPUT "  <Style id=\"BA-Style-Orange-Visible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF1772F8</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScaleMedium</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>$LabelScale</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  #
+  print OUTPUT "  <Style id=\"BA-Style-Orange-InVisible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF1772F8</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScaleMedium</scale>\n";
   print OUTPUT "    </IconStyle>\n";
   print OUTPUT "    <LabelStyle>\n";
   print OUTPUT "      <scale>0</scale>\n";
@@ -2185,6 +2729,38 @@ sub Create_KML {
   print OUTPUT "  <Style id=\"BA-Style-Yellow-InVisible\">\n";
   print OUTPUT "    <IconStyle>\n";
   print OUTPUT "      <color>FF00FFFF</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>0</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  print OUTPUT "  </Style>\n";
+  # Olive
+  print OUTPUT "  <Style id=\"BA-Style-Olive-Visible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF00CC99</color>\n";
+  print OUTPUT "      <Icon>\n";
+  print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
+  print OUTPUT "      </Icon>\n";
+  print OUTPUT "      <scale>$IconScale</scale>\n";
+  print OUTPUT "    </IconStyle>\n";
+  print OUTPUT "    <LabelStyle>\n";
+  print OUTPUT "      <scale>$LabelScale</scale>\n";
+  print OUTPUT "    </LabelStyle>\n";
+  print OUTPUT "    <BalloonStyle>\n";
+  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "    </BalloonStyle>\n";
+  #
+  print OUTPUT "  </Style>\n";
+  print OUTPUT "  <Style id=\"BA-Style-Olive-InVisible\">\n";
+  print OUTPUT "    <IconStyle>\n";
+  print OUTPUT "      <color>FF00CC99</color>\n";
   print OUTPUT "      <Icon>\n";
   print OUTPUT "        <href>https://www.earthpoint.us/Dots/GoogleEarth/shapes/donut.png</href>\n";
   print OUTPUT "      </Icon>\n";
@@ -2252,6 +2828,17 @@ sub Create_KML {
   print OUTPUT "      <styleUrl>#BA-Style-Red-InVisible</styleUrl>\n";
   print OUTPUT "    </Pair>\n";
   print OUTPUT "  </StyleMap>\n";
+  # Orange
+  print OUTPUT "  <StyleMap id=\"BA-Style-Orange-Map\">\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>highlight</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Orange-Visible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>normal</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Orange-InVisible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "  </StyleMap>\n";
   # Yellow
   print OUTPUT "  <StyleMap id=\"BA-Style-Yellow-Map\">\n";
   print OUTPUT "    <Pair>\n";
@@ -2261,6 +2848,17 @@ sub Create_KML {
   print OUTPUT "    <Pair>\n";
   print OUTPUT "      <key>normal</key>\n";
   print OUTPUT "      <styleUrl>#BA-Style-Yellow-InVisible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "  </StyleMap>\n";
+  # Olive
+  print OUTPUT "  <StyleMap id=\"BA-Style-Olive-Map\">\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>highlight</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Olive-Visible</styleUrl>\n";
+  print OUTPUT "    </Pair>\n";
+  print OUTPUT "    <Pair>\n";
+  print OUTPUT "      <key>normal</key>\n";
+  print OUTPUT "      <styleUrl>#BA-Style-Olive-InVisible</styleUrl>\n";
   print OUTPUT "    </Pair>\n";
   print OUTPUT "  </StyleMap>\n";
   # Green
@@ -2274,6 +2872,8 @@ sub Create_KML {
   print OUTPUT "    <styleUrl>#BA-Style-Green-InVisible</styleUrl>\n";
   print OUTPUT "  </Pair>\n";
   print OUTPUT "</StyleMap>\n";
+#rlh  print OUTPUT "  <Folder>\n";
+  print OUTPUT "    <name>Datapoints</name>\n";
 
   foreach my $Loop ( @AirlinkData ) {
     my @SINR;
@@ -2326,23 +2926,28 @@ sub Create_KML {
         $LastLatency=$14;
         # Calculate the Average DRC for the update
         @DRC=split(' ',$DRC);
-        for my $D (@DRC) {
-          $DRCV += $DRCValues[$D];
+        $ADRC=sprintf("%.2f", &Get_DRC( $DRC ));
+        # What color should our bubbles be?
+        if ( $ADRC < 307.2 ) {
+          $AircraftColor="Red";
+        } elsif ( ( $ADRC >= 307.2 ) &&  ( $ADRC < 614.4 ) ) {
+          $AircraftColor="Orange";
+        } elsif ( ( $ADRC >= 614.4 ) &&  ( $ADRC < 1228 ) ) {
+          $AircraftColor="Yellow";
+        } elsif ( ( $ADRC >= 1228.4 ) &&  ( $ADRC < 2456 ) ) {
+          $AircraftColor="Olive";
+        } elsif ( $ADRC >= 2456 ) {
+          $AircraftColor="Green";
+        } else {
+          $AircraftColor="Unknown";
         }
-        $ADRC=($DRCV/($#DRC +1));
+
+        # Calculate the Average SINR for the update
         @SINR=split(' ',$SINR);
         for my $S (@SINR) {
           $SINRV += $S;
         }
-        # Calculate the Average SINR for the update
-        $ASINR=($SINRV/($#SINR +1));
-        if ( $ASINR < 0 ) {
-          $AircraftColor="Red";
-        } elsif ( ( $ASINR >= 0 ) &&  ( $ASINR < 6 ) ) {
-          $AircraftColor="Yellow";
-        } elsif ( $ASINR >= 6 ) {
-          $AircraftColor="Green";
-        }
+        $ASINR=sprintf("%.2f",($SINRV/($#SINR +1)));
       }
     } else {
       $Loop =~ /(\d\d\d\d\-\d\d\-\d\d \d\d:\d\d:\d\d,\d+) Airlink: .*Aircard Latitude (.*) : Longitude (.*) : Altitude (.*), DRC_BUFFER (.*), BEST_ASP_SINR_BUFFER (.*), PILOT_PN_ASP (.*), Tx_AGC (.*), Rx_AGC0 (.*), Rx_AGC1 (.*), Cell (\d+), Sector (\d+), LastPacketLoss (.*), LastLatency (.*)/;
@@ -2362,128 +2967,137 @@ sub Create_KML {
       $LastLatency=$14;
     }
 
-    print OUTPUT "  <Placemark>\n";
+    print OUTPUT "    <Placemark>\n";
     my ( $FlightDate, $TS )=split(' ', $Time); 
     my ( $TSShort, undef )=split(',', $TS);
     $FlightDate =~ m,(\d+)-(\d+)-(\d+),;
     my $FlightDate2=$1.$2.$3;
  
-    print OUTPUT "    <styleUrl>#BA-Style-".$AircraftColor."-Map</styleUrl>\n";
-    print OUTPUT "    <name>$TSShort</name>\n";
-    print OUTPUT "    <ExtendedData>\n";
-    print OUTPUT "      <Data name=\"Time\">\n";
-    print OUTPUT "        <value>$Time</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Lat\">\n";
-    print OUTPUT "        <value>$Lat</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Lon\">\n";
-    print OUTPUT "        <value>$Lon</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Alt\">\n";
-    print OUTPUT "        <value>$Alt</value>\n";
-    print OUTPUT "      </Data>\n";
-#    print OUTPUT "      <Data name=\"Last Packet Loss\">\n";
-#    print OUTPUT "        <value>$LastPacketLoss</value>\n";
-#    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Last Latency\">\n";
-    print OUTPUT "        <value>$LastLatency</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Avg DRC This Ping\">\n";
-    print OUTPUT "        <value>$ADRC ( Flight: $TotalDRC )</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Raw DRC Reported\">\n";
-    print OUTPUT "        <value>$DRC</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Avg SINR This Ping\">\n";
-    print OUTPUT "        <value>$ASINR ( Flight $TotalSINR )</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Raw SINR Reported\">\n";
-    print OUTPUT "        <value>$SINR</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"PILOT_PN_AS_ASP\">\n";
-    print OUTPUT "        <value>$PPN</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Tx_AGC\">\n";
-    print OUTPUT "        <value>$TxA</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Rx_AGC0\">\n";
-    print OUTPUT "        <value>$RxA0</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Rx_AGC1\">\n";
-    print OUTPUT "        <value>$RxA1</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Cell\">\n";
+    print OUTPUT "      <styleUrl>#BA-Style-".$AircraftColor."-Map</styleUrl>\n";
+    print OUTPUT "      <name>$TSShort UTC </name>\n";
+    print OUTPUT "      <ExtendedData>\n";
+    print OUTPUT "        <Data name=\"Time\">\n";
+    print OUTPUT "          <value>$Time UTC </value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Last ATG Time Drift\">\n";
+    print OUTPUT "          <value>$LastDrift</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Lat\">\n";
+    print OUTPUT "          <value>$Lat</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Lon\">\n";
+    print OUTPUT "          <value>$Lon</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Alt\">\n";
+    print OUTPUT "          <value>$Alt</value>\n";
+    print OUTPUT "        </Data>\n";
+#    print OUTPUT "        <Data name=\"Last Packet Loss\">\n";
+#    print OUTPUT "          <value>$LastPacketLoss</value>\n";
+#    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Last Latency\">\n";
+    print OUTPUT "          <value>$LastLatency</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Avg DRC This Ping\">\n";
+    print OUTPUT "          <value>$ADRC ( Flight: $TotalDRC )</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Raw DRC Reported\">\n";
+    print OUTPUT "          <value>$DRC</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Avg SINR This Ping\">\n";
+    print OUTPUT "          <value>$ASINR ( Flight $TotalSINR )</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Raw SINR Reported\">\n";
+    print OUTPUT "          <value>$SINR</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"PILOT_PN_AS_ASP\">\n";
+    print OUTPUT "          <value>$PPN</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Tx_AGC\">\n";
+    print OUTPUT "          <value>$TxA</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Rx_AGC0\">\n";
+    print OUTPUT "          <value>$RxA0</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Rx_AGC1\">\n";
+    print OUTPUT "          <value>$RxA1</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Cell\">\n";
     my $Tower;
     if ( $Towers{$Cell} ) {
       $Tower=$Towers{$Cell};
     } else {
       $Tower="Undefined";
     }
-    print OUTPUT "        <value>$Cell ( $Tower )</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Sector\">\n";
-    print OUTPUT "        <value>$Sector</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Flight Charts:\">\n";
+    print OUTPUT "          <value>$Cell ( $Tower )</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Sector\">\n";
+    print OUTPUT "          <value>$Sector</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Flight Charts:\">\n";
     #my $FlightChart="http://performance.aircell.prod/reports/catalog/index.cgi?rm=details&tail=$Tail&date=$FlightDate2";
     my $FlightChart="&lt;a href=&quot;http://performance.aircell.prod/reports/catalog/index.cgi?rm=details&amp;tail=$Tail&amp;date=$FlightDate2&quot;&gt;View Charts&lt;/a&gt;&lt;br/&gt;&lt;br /&gt;";
 
 #http://performance.aircell.prod/reports/catalog/index.cgi?rm=details&tail=$Tail&date=$FlightDate2";
 
-    print OUTPUT "        <value>$FlightChart</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "    </ExtendedData>\n";
-    print OUTPUT "    <Point>\n";
-    print OUTPUT "      <coordinates>$Lon,$Lat,$Alt</coordinates>\n";
-    print OUTPUT "    </Point>\n";
-    print OUTPUT "  </Placemark>\n";
+    print OUTPUT "          <value>$FlightChart</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "      </ExtendedData>\n";
+    print OUTPUT "      <Point>\n";
+    print OUTPUT "        <altitudeMode>absolute</altitudeMode>\n";
+    print OUTPUT "        <coordinates>$Lon,$Lat,$Alt</coordinates>\n";
+    print OUTPUT "      </Point>\n";
+    print OUTPUT "    </Placemark>\n";
   }
+  print OUTPUT "  </Folder>\n";
+
+  # Process Reboots
+  print OUTPUT "  <Folder>\n";
+  print OUTPUT "    <name>Reboots</name>\n";
   # Define the Styles ( which go in the MAPS ) for Reboots
   # UNKNOWN
-  print OUTPUT "  <Style id=\"BA-Style-Reboot-Visible\">\n";
-  print OUTPUT "    <IconStyle>\n";
-  print OUTPUT "      <color>FF0000FF</color>\n";
-  print OUTPUT "      <Icon>\n";
-  print OUTPUT "        <href>http://maps.google.com/mapfiles/kml/pal3/icon39.png</href>\n";
-  print OUTPUT "      </Icon>\n";
-  print OUTPUT "      <scale>$IconScale</scale>\n";
-  print OUTPUT "    </IconStyle>\n";
-  print OUTPUT "    <LabelStyle>\n";
-  print OUTPUT "      <scale>$LabelScale</scale>\n";
-  print OUTPUT "    </LabelStyle>\n";
-  print OUTPUT "    <BalloonStyle>\n";
-  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
-  print OUTPUT "    </BalloonStyle>\n";
-  print OUTPUT "  </Style>\n";
+  print OUTPUT "    <Style id=\"BA-Style-Reboot-Visible\">\n";
+  print OUTPUT "      <IconStyle>\n";
+  print OUTPUT "        <color>FF0000FF</color>\n";
+  print OUTPUT "        <Icon>\n";
+  print OUTPUT "          <href>http://maps.google.com/mapfiles/kml/pal3/icon39.png</href>\n";
+  print OUTPUT "        </Icon>\n";
+  print OUTPUT "        <scale>$IconScale</scale>\n";
+  print OUTPUT "      </IconStyle>\n";
+  print OUTPUT "      <LabelStyle>\n";
+  print OUTPUT "        <scale>$LabelScale</scale>\n";
+  print OUTPUT "      </LabelStyle>\n";
+  print OUTPUT "      <BalloonStyle>\n";
+  print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "      </BalloonStyle>\n";
+  print OUTPUT "    </Style>\n";
   #
-  print OUTPUT "  <Style id=\"BA-Style-Reboot-InVisible\">\n";
-  print OUTPUT "    <IconStyle>\n";
-  print OUTPUT "      <color>FF0000FF</color>\n";
-  print OUTPUT "      <Icon>\n";
-  print OUTPUT "        <href>http://maps.google.com/mapfiles/kml/pal3/icon39.png</href>\n";
-  print OUTPUT "      </Icon>\n";
-  print OUTPUT "      <scale>$IconScale</scale>\n";
-  print OUTPUT "    </IconStyle>\n";
-  print OUTPUT "    <LabelStyle>\n";
-  print OUTPUT "      <scale>0</scale>\n";
-  print OUTPUT "    </LabelStyle>\n";
-  print OUTPUT "    <BalloonStyle>\n";
-  print OUTPUT "      <bgColor>FFFFFFFF</bgColor>\n";
-  print OUTPUT "    </BalloonStyle>\n";
-  print OUTPUT "  </Style>\n";
+  print OUTPUT "    <Style id=\"BA-Style-Reboot-InVisible\">\n";
+  print OUTPUT "      <IconStyle>\n";
+  print OUTPUT "        <color>FF0000FF</color>\n";
+  print OUTPUT "        <Icon>\n";
+  print OUTPUT "          <href>http://maps.google.com/mapfiles/kml/pal3/icon39.png</href>\n";
+  print OUTPUT "        </Icon>\n";
+  print OUTPUT "        <scale>$IconScale</scale>\n";
+  print OUTPUT "      </IconStyle>\n";
+  print OUTPUT "      <LabelStyle>\n";
+  print OUTPUT "        <scale>0</scale>\n";
+  print OUTPUT "      </LabelStyle>\n";
+  print OUTPUT "      <BalloonStyle>\n";
+  print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+  print OUTPUT "      </BalloonStyle>\n";
+  print OUTPUT "    </Style>\n";
   # Define Maps for the Colors
-  # Unknown
-  print OUTPUT "  <StyleMap id=\"BA-Style-Reboot-Map\">\n";
-  print OUTPUT "    <Pair>\n";
-  print OUTPUT "      <key>highlight</key>\n";
-  print OUTPUT "      <styleUrl>#BA-Style-Reboot-Visible</styleUrl>\n";
-  print OUTPUT "    </Pair>\n";
-  print OUTPUT "    <Pair>\n";
-  print OUTPUT "      <key>normal</key>\n";
-  print OUTPUT "      <styleUrl>#BA-Style-Reboot-InVisible</styleUrl>\n";
-  print OUTPUT "    </Pair>\n";
-  print OUTPUT "  </StyleMap>\n";
+  # Reboots
+  print OUTPUT "    <StyleMap id=\"BA-Style-Reboot-Map\">\n";
+  print OUTPUT "      <Pair>\n";
+  print OUTPUT "        <key>highlight</key>\n";
+  print OUTPUT "        <styleUrl>#BA-Style-Reboot-Visible</styleUrl>\n";
+  print OUTPUT "      </Pair>\n";
+  print OUTPUT "      <Pair>\n";
+  print OUTPUT "        <key>normal</key>\n";
+  print OUTPUT "        <styleUrl>#BA-Style-Reboot-InVisible</styleUrl>\n";
+  print OUTPUT "      </Pair>\n";
+  print OUTPUT "    </StyleMap>\n";
   foreach my $Loop ( @RebootData ) {
     $Loop =~ /(\d\d\d\d\-\d\d\-\d\d \d\d:\d\d:\d\d,\d+) PowerReset: Latitude (.*), Longitude (.*), Altitude (.*), LastCell (.*), LastSector (.*), LastASA (.*)/;
     my $Time=$1;
@@ -2494,52 +3108,56 @@ sub Create_KML {
     my $Sector=$6;
     my $ASA=$7;
     my $ASAStatus;
-    print OUTPUT "  <Placemark>\n";
+    print OUTPUT "    <Placemark>\n";
     my ( undef, $TS )=split(' ', $Time); 
     my ( $TSShort, undef )=split(',', $TS);
-    print OUTPUT "    <styleUrl>#BA-Style-Reboot-Map</styleUrl>\n";
-    print OUTPUT "    <name>Power Reset at $TSShort</name>\n";
-    print OUTPUT "    <ExtendedData>\n";
-    print OUTPUT "      <Data name=\"Time\">\n";
-    print OUTPUT "        <value>$Time</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"ASA Status\">\n";
+    print OUTPUT "      <styleUrl>#BA-Style-Reboot-Map</styleUrl>\n";
+    print OUTPUT "      <name>Power Reset at $TSShort UTC </name>\n";
+    print OUTPUT "      <ExtendedData>\n";
+    print OUTPUT "        <Data name=\"Time\">\n";
+    print OUTPUT "          <value>$Time UTC </value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"ASA Status\">\n";
     if ( $ASA eq "T" ) {
       $ASAStatus="True";
     } else {
       $ASAStatus="True";
     }
-    print OUTPUT "        <value>$ASA</value>\n";
-    print OUTPUT "        <value>$ASAStatus</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Lat\">\n";
-    print OUTPUT "        <value>$Lat</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Lon\">\n";
-    print OUTPUT "        <value>$Lon</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Alt\">\n";
-    print OUTPUT "        <value>$Alt</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Cell\">\n";
+    print OUTPUT "          <value>$ASA</value>\n";
+    print OUTPUT "          <value>$ASAStatus</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Lat\">\n";
+    print OUTPUT "          <value>$Lat</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Lon\">\n";
+    print OUTPUT "          <value>$Lon</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Alt\">\n";
+    print OUTPUT "          <value>$Alt</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Cell\">\n";
     my $Tower;
     if ( $Towers{$Cell} ) {
       $Tower=$Towers{$Cell};
     } else {
       $Tower="Undefined";
     }
-    print OUTPUT "        <value>$Cell ( $Tower )</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "      <Data name=\"Sector\">\n";
-    print OUTPUT "        <value>$Sector</value>\n";
-    print OUTPUT "      </Data>\n";
-    print OUTPUT "    </ExtendedData>\n";
-    print OUTPUT "    <Point>\n";
-    print OUTPUT "      <coordinates>$Lon,$Lat,$Alt</coordinates>\n";
-    print OUTPUT "    </Point>\n";
-    print OUTPUT "  </Placemark>\n";
+    print OUTPUT "          <value>$Cell ( $Tower )</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "        <Data name=\"Sector\">\n";
+    print OUTPUT "          <value>$Sector</value>\n";
+    print OUTPUT "        </Data>\n";
+    print OUTPUT "      </ExtendedData>\n";
+    print OUTPUT "      <Point>\n";
+    print OUTPUT "        <altitudeMode>absolute</altitudeMode>\n";
+    print OUTPUT "        <coordinates>$Lon,$Lat,$Alt</coordinates>\n";
+    print OUTPUT "      </Point>\n";
+    print OUTPUT "    </Placemark>\n";
   }
+  print OUTPUT "  </Folder>\n";
+  # End of Reboots
 
+  
 
 
 
