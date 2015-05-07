@@ -163,7 +163,11 @@ if ( ! $Continue ) {
 
 &Define_Months;
 &Define_Parameters;
+
+
+print "Start: $StartYear, $StartMon, $StartDay, $StartHour, $StartMin, $StartSec\n" if ( $Verbose );
 my $StartStamp=&ConvertManualTimeStamp( $StartYear, $StartMon, $StartDay, $StartHour, $StartMin, $StartSec );
+print "Finish: $FinishYear, $FinishMon, $FinishDay, $FinishHour, $FinishMin, $FinishSec\n" if ( $Verbose );
 my $FinishStamp=&ConvertManualTimeStamp( $FinishYear, $FinishMon, $FinishDay, $FinishHour, $FinishMin, $FinishSec );
 
 my $Start=$StartYear.$StartMon.$StartDay;
@@ -180,26 +184,39 @@ $Finish=$FinishYear.$FinishMon.$FinishDay;
 if ( ! $Year ) {
   $Year=`/bin/date +%Y`; chomp( $Year );
 }
-my $Dir="/opt/log/atg/".$Year."/".$opt_m;
 
-print "\$Dir :$Dir:\n" if ( $Verbose );
-chdir("$Dir");
+foreach my $Loop ( $opt_sm..$opt_fm ) {
+  print "Processing Month :$Loop:\n" if ( $Verbose );
 
-if ( ( $opt_console ) || ( $opt_fc ) ) {
-  &ListATGConsoleFiles;
-  &ImportATGConsoleFiles;
+  my $Dir="/opt/log/atg/".$Year."/".$Loop;
+
+  print "\$Dir :$Dir:\n" if ( $Verbose );
+  chdir("$Dir");
+  if ( ( $opt_console ) || ( $opt_fc ) ) {
+    &ListATGConsoleFiles;
+    &ImportATGConsoleFiles;
+  }
+
+  if ( $opt_messages ) {
+    &ListATGMessagesFiles;
+    &ImportATGMessagesFiles;
+  }
+  # SortLoglines to fold in messages and console
+  @LogLines=sort(@LogLines);
+  # Lets fix our drift after importing them all
+  @LogLines=&Fix_Drift(@LogLines);
+
+  # Lets import SM/Airlink now that we've fixed drift since they don't need to be 'fixed'
+  if ( $opt_airlink ) {
+    &ListATGSMFiles;
+    &ImportATGSMFiles;
+  }
+
+  # Re-sort now that Airlink is included 
+  @LogLines=sort(@LogLines);
 }
-if ( $opt_airlink ) {
-  &ListATGSMFiles;
-  &ImportATGSMFiles;
-}
-if ( $opt_messages ) {
-  &ListATGMessagesFiles;
-  &ImportATGMessagesFiles;
-}
 
 
-print "Total LogLines Loaded : $#LogLines\n";
 &WriteCorrelationLog if ( $#LogLines > 0 );
 
 
@@ -211,15 +228,6 @@ sub ListATGConsoleFiles {
   # Define the list of ATG Console files to read in.
 
   if ( $opt_console ) {
-    if ( $StartMon != $FinishMon ) {
-      # Have to get the file list from multimple months.
-      # Have to implement that still.
-      print "\n";
-      print "Multiple Months not implemented yet.\n";
-      print "\n";
-      exit 0;
-    }
-
     # Lets find the location of our log files
     my $FileList=$ATGBase.$StartYear."/".$StartMon."/".$Tail."/abs_logs/acpu_java/*.console.log.tar.gz";
 
@@ -251,19 +259,6 @@ sub ListATGConsoleFiles {
 
 
 sub ListATGSMFiles {
-  # Define the list of ATG Airlink (SM) files to read in.
-
-
-  #/opt/log/atg/2014/03/13512/sm
-
-  if ( $StartMon != $FinishMon ) {
-    # Have to get the file list from multimple months.
-    # Have to implement that still.
-    print "\n";
-    print "Multiple Months not implemented yet.\n";
-    print "\n";
-    exit 0;
-  }
 
   # Lets find the location of our log files
   my $FileList=$ATGBase.$StartYear."/".$StartMon."/".$Tail."/sm/*SM.tar.gz";
@@ -372,34 +367,16 @@ sub ImportATGConsoleFiles {
         $Message=$2;
       $Line="$TimeStamp Console: $Message";
       $Line=&ConvertATGTimeStamp( $Line );
-      $FileLineCount++;
-      
-      # Lets find our Drift
-      $Drift=&Process_GPS_Time("$Line") if ( ( $Line =~ /GPS TIME/) && ( !  $NetOpsNotes{"ATG GPS Time Entry"} ));
-      $Line =~ /(\d+\.\d+) Console: (.*)/;
-      $TimeStamp=$1;
-      $Message=$2;
-
-      # Time from the Airlink ( SM ) is based on GPS 
-      if ( $Message !~ /Airlink:/ ) {
-        $TimeStamp-=$Drift;
-      }
-
-      my ( $Time, $Mili )=split('\.', $TimeStamp);
-      $Mili="000000" if ( ! $Mili );
-      $Mili=substr("$Mili"."000000", 0, 6);
-      $TimeStamp=$Time.".".$Mili;
-     
-      $Line=$TimeStamp." Console: ".$Message;
-      
       push(@LogLines, $Line);
-    
+      $FileLineCount++;
+     
       # Log changes to Drift
       my $DriftChange=$Drift-$LastDrift;
       if ( abs($DriftChange) > 60 ) {
         my $DriftLine="$TimeStamp Drift: $Drift";
         push(@LogLines, $DriftLine);
         $LastDrift=$Drift;
+        $FileLineCount++;
       }
     }
     print "Loaded $FileLineCount lines.\n" if ( $Verbose );
@@ -498,6 +475,7 @@ sub ImportATGMessagesFiles {
 
       # Remove Duplicate Lines
       next if ( $LastLine eq $Line );
+
       # Update Last to current for next test
       $LastLine=$Line;
 
@@ -511,10 +489,6 @@ sub ImportATGMessagesFiles {
       $Min=$4;
       $Sec=$5;
       $Message=$6;
-
-      # Lets De-Dupe
-      next if ( $Message eq $LastMessage);
-      $LastMessage=$Message;
 
       $Mon=$RMons{$TMon};
       $Day=substr("0"."$Day", -2);
@@ -734,6 +708,32 @@ sub Process_GPS_Time {
 }
 
 
+sub Fix_Drift {
+  my (@Lines)=@_;
+  my (@LogLines);
+
+  foreach my $Line ( @Lines ) {
+#print "Drift \$Line :$Line:\n";
+
+    # Lets find our Drift
+    $Drift=&Process_GPS_Time("$Line") if ( ( $Line =~ /GPS TIME/) && ( !  $NetOpsNotes{"ATG GPS Time Entry"} ));
+    $Line =~ /(\d+\.\d+) (.*)/;
+    my $TimeStamp=$1;
+    my $Message=$2;
+
+    my ( $Time, $Mili )=split('\.', $TimeStamp);
+    $Mili="000000" if ( ! $Mili );
+    $Mili=substr("$Mili"."000000", 0, 6);
+    $TimeStamp=$Time.".".$Mili;
+  
+    $Line=$TimeStamp." ".$Message;
+  
+    push(@LogLines, $Line);
+  }
+  return(@LogLines);
+}
+
+
 sub Log_Commands {
   $NetOpsNotes{"0001-Tail"}="Extracting Tail $Tail Starting with $StartYear/$StartMon/$StartDay $StartTime through $FinishYear/$FinishMon/$FinishDay $FinishTime to $Target";
 }
@@ -877,7 +877,10 @@ sub ConvertManualTimeStamp {
 
   my $Date = $Year."/".$Mon."/".$Day." ".$Hour.":".$Min.":".$Sec;
 
+print "\$Mon :$Mon:\n" if ( $Verbose );
   $Mon=$Mon -1;
+print "\$Mon :$Mon:\n" if ( $Verbose );
+print "\$Date :$Date:\n" if ( $Verbose );
 
   $Time = timelocal($Sec,$Min,$Hour,$Day,$Mon,$Year);
 
