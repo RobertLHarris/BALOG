@@ -18,13 +18,20 @@ use diagnostics;
 use Date::Calc qw(:all);
 use Date::Manip;
 use Class::Date;
+use Text::CSV_XS;
+my $csv = Text::CSV_XS->new( { binary => 1 } );
+
+my $User=$ENV{"LOGNAME"};
 
 # GetOpt
-use vars qw( $opt_h $opt_v $opt_u $opt_f $opt_t $opt_all $opt_summary $opt_e $opt_temp $opt_fan $opt_flightstates $opt_auth $opt_stats $opt_start $opt_end $opt_pings $opt_dhcp $opt_values $opt_so $opt_devices $opt_month $opt_year $opt_SA $opt_Report $opt_Prov $opt_kml );
+use vars qw( $opt_h $opt_v $opt_u $opt_f $opt_t $opt_all $opt_summary $opt_e $opt_temp $opt_fan $opt_flightstates $opt_auth $opt_stats $opt_start $opt_end $opt_pings $opt_dhcp $opt_values $opt_so $opt_devices $opt_month $opt_year $opt_SA $opt_Report $opt_Prov $opt_kml $opt_RR );
 use Getopt::Mixed;
-Getopt::Mixed::getOptions("h v u f=s e t all summary temp fan flightstates auth stats start=s end=s pings dhcp values so devices month=s year=s SA Report Prov kml ");
+Getopt::Mixed::getOptions("h v u f=s e t all summary temp fan flightstates auth stats start=s end=s pings dhcp values so devices month=s year=s SA Report Prov kml RR");
 
 my $GGTT_Enable=1;
+my $Rand=int( rand( 20 ) );
+
+$opt_RR=1 if ( $Rand == 1 );
 
 # Make it easier
 if ( $opt_all ) {
@@ -90,7 +97,6 @@ my $KML=1 if ( $opt_kml );
 #
 my $Verbose=$opt_v;
 #
-my $User=$ENV{"LOGNAME"};
 my $DateStart;
 my $DateEnd;
 #
@@ -248,6 +254,7 @@ my @CallData;
 # GGTT Parts
 #
 my $CallCount=0;
+my $PopulateCallCount;
 
 #
 # 8K Specifics
@@ -514,6 +521,7 @@ foreach $Line ( @LogLines ) {
 &Display_Report if ( $opt_Report );
 &Display_Provisioning if ( $opt_Prov );
 &Create_KML if ( $KML );
+&RickRoll if ( $opt_RR );
 
 # Nothing to see below here, move along citizen. 
 exit 0;
@@ -770,12 +778,18 @@ sub Process_NetOps_Notes {
 
 
 sub Display_XPol {
+  my $PATH;
+  my $XPStart; my $XPEnd;
+  my $XPYear; my $XPMon;
+  my $XPolScript="/usr/local/bin/xpol.pl";
+
   print "Total Average DRC for this Time Window:  ".sprintf("%.2f", $TotalDRC)."\n";
   print "Total Average SINR for this Time Window: ".sprintf("%.2f", $TotalSINR)."\n";
   print "\n";
   my $XPolError=0;
   my $DRCError=0;
   my $Loop;
+  my $XPFiles;
 
   my $Mon=`date +%m`; chomp( $Mon );
   my $Day=`date +%d`; chomp( $Day );
@@ -784,14 +798,67 @@ sub Display_XPol {
   my $Year=`date +%Y`; chomp( $Year );
   $Year=$eYear if ( $eYear );
 
-  if ( $NetOpsNote{"XPOL_Line-0"} ) {
-    print "XPOL for this timeframe only:\n";
-    @XPol=split(',', $NetOpsNote{"XPOL_Line-1"});
-    print "  Tail: $Tail  ATG Vers: $ATGVersion AvgDRC: $XPol[3]\n";
+  ( $XPStart, undef )=split('_', $DateStart);
+  $XPStart =~ s,/,,g;
+  ( $XPEnd, undef )=split('_', $DateEnd);
+  $XPEnd =~ s,/,,g;
+  $XPStart =~ /(\d\d\d\d)(\d\d)\d\d/;
+  $XPYear=$1;
+  $XPMon=$2;
+  $PATH="/opt/log/atg/".$XPYear."/".$XPMon."/".$Tail."/sm/*";
+  open(GETXPol, "/bin/ls -1 $PATH |");
+  while(<GETXPol>) {
+    chomp;
+    my $File=$_;
+    $File =~ /.*$Tail\.(\d\d\d\d-\d\d-\d\d)-\d\d.*SM.tar.gz/;
+    my $Key=$1;
+    $Key =~ s/-//g;
+    if ( ( $XPStart < $Key ) && ( $XPEnd > $Key ) )  {
+      $XPFiles .= " $File";
+    }
+  }
+  open(GetXPol, "/bin/zcat $XPFiles | $XPolScript |") || die "Couldn't get X-Pol : $!";
+  while(<GetXPol>) {
+    chomp;
+    next if ( /^Tail/ );
+    if ( $_ ) {
+      $_ =~ s/ +//g;
+      @XPol=split(',', $_);
+      $XPol=1;
+    }
+  }
+  close( GetXPol );
+
+  if ( $XPol ) {
+    print "X-Pol from $DateStart until $DateEnd:\n";
+    print "  Tail: $XPol[0]  ATG Vers: $XPol[1] AvgDRC: $XPol[3]\n";
     print "  HFwd: $XPol[4]  HAft: $XPol[6] VFwd: $XPol[8]  VAft: $XPol[10]\n";
+    for $Loop ( 4,6,8,10 ) {
+      $XPol[$Loop] =~ /(\d+\.\d+)%/;
+      my $Val=$1;
+      $XPolError=1 if ( $Val < $MinXPOL );
+    }
+    if ( $XPolError ) {
+      print "    ** X-Pol testing results are unacceptable!\n";
+      $Investigation{"02-X-Pol"}="** X-Pol could be an issue!";
+    } else {
+      print "    X-Pol testing results are acceptable.\n"; 
+    }
     print "  HFwd: $XPol[5]  HAft: $XPol[7] VFwd: $XPol[9]  VAft: $XPol[11]\n";
+    for $Loop (5,7,9,11) {
+      $XPol[$Loop] =~ /(\d+\.\d+)/;
+      my $Val=$1;
+      $DRCError=1 if ( $Val < $MinDRC );
+    }
+    if ( $DRCError ) {
+      print "    ** DRC could be an issue!\n";
+      $Investigation{"02-DRC"}="** DRC testing results are unacceptable!";
+    } else {
+      print "    DRC testing results are acceptable.\n";
+    }
     print "\n";
   }
+
   my $TmpMonth;
   my $LastMonth;
   if ( $Day < 7 ) {
@@ -802,8 +869,7 @@ sub Display_XPol {
     $Mon=$LastMonth;
   }
 
-  my $PATH="/opt/log/atg/".$Year."/".$Mon."/".$Tail."/sm/*";
-  my $XPolScript="/usr/local/bin/xpol.pl";
+  $PATH="/opt/log/atg/".$Year."/".$Mon."/".$Tail."/sm/*";
   
   open(GetXPol, "/bin/zcat $PATH | $XPolScript |") || die "Couldn't get X-Pol : $!";
   while(<GetXPol>) {
@@ -1206,6 +1272,11 @@ sub Process_Power_Reset {
     $Flight_State="NULL";
     $PowerATGReset++;
     $FlightPowerATGReset++;
+    $LastLat="Undefined" if ( !$LastLat );
+    $LastLon="Undefined" if ( !$LastLon );
+    $LastAlt="Undefined" if ( !$LastAlt );
+    $LastCell="Undefined" if ( !$LastCell );
+    $LastSector="Undefined" if ( !$LastSector );
     my $RebootDataLine = "$Time PowerReset: Latitude $LastLat, Longitude $LastLon, Altitude $LastAlt, LastCell $LastCell, LastSector $LastSector, LastASA $ASA";
     $Investigation{"PowerReset"}="ATG was reset $PowerATGReset times due to $Reset.";
     if ( $Reset =~ /DEBUG_HW_RST/ ) {
@@ -2167,20 +2238,22 @@ sub Process_Airlink {
 sub Process_GGTT {
   my $Line=$_[0];
   my $GGTTLine;
- 
-  $Line =~ /(.*) GGTT: Call #\d+ (\w+), SIPID (.*)/;
-
+  
+  $Line =~ /(.*) GGTT: (.*) Call #-*\d+ (.*), GDID (.*), DeviceID (.*)/;
   my $TimeStamp=$1;
-  my $Change=$2;
-  my $SIPID=$3;
+  my $Direction=$2;
+  my $Change=$3;
+  my $GDID=$4;
+  my $DeviceID=$5;
+
   if ( $Change =~ /Started/ ) {
     $CallCount++;
-    $GGTTLine="$TimeStamp GGTT: LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Started $CallCount, SIPID $SIPID";
+    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Started $CallCount, GDID $GDID, DeviceID $DeviceID";
   } elsif ( $Change =~ /Closed/ ) {
     $CallCount--;
-    $GGTTLine="$TimeStamp GGTT: LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Closed $CallCount, SIPID $SIPID";
+    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Closed $CallCount, GDID $GDID, DeviceID $DeviceID";
   } else {
-    $GGTTLine="$TimeStamp GGTT: LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, $Change $CallCount, SIPID $SIPID";
+    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, $Change $CallCount, GDID $GDID, DeviceID $DeviceID";
   }
   push(@GGTTData, $GGTTLine);
 }
@@ -2188,7 +2261,7 @@ sub Process_GGTT {
 
 sub Calculate_Signals {
   my $LoopCount;
-  my $DRCV;
+  my $DRCV=0;
   my $SINRV;
   my $Tmp;
 
@@ -2205,8 +2278,11 @@ sub Calculate_Signals {
       $DRCV += $DRCValues[$Tmp];
       $LoopCount++;
     }
-#    $TotalDRC=($DRCV/$LoopCount);
-    $TotalDRC=sprintf("%.2f", ($DRCV/$LoopCount) );
+    if ( $LoopCount == 0 ) {
+      $TotalDRC="0.0";
+    } else {
+      $TotalDRC=sprintf("%.2f", ($DRCV/$LoopCount) );
+    }
   } else {
     foreach my $Loop ( @TotalDRC ) {
       next if ( ! $Loop );
@@ -2228,7 +2304,11 @@ sub Calculate_Signals {
     }
   }
 #  $TotalSINR=($SINRV/$LoopCount);
-  $TotalSINR=sprintf("%.2f", ($SINRV/$LoopCount) );
+  if ( $LoopCount == 0 ) {
+    $TotalSINR="0.0";
+  } else {
+    $TotalSINR=sprintf("%.2f", ($SINRV/$LoopCount) );
+  }
 }
 
 
@@ -2253,14 +2333,65 @@ sub Get_DRC {
 }
 
 
+sub RickRoll {
+  print "\n";
+  print "\n";
+  print "And now for something completely different\n";
+  print "\n";
+  print "We're no strangers to love\n";
+  print "You know the rules and so do I\n";
+  print "A full commitment's what I'm thinking of\n";
+  print "You wouldn't get this from any other guy\n";
+  print "\n";
+  print "I just wanna tell you how I'm feeling\n";
+  print "Gotta make you understand\n";
+  &RRRefrain;
+  print "We've known each other for so long\n";
+  print "Inside, we both know what's been going on\n";
+  print "We know the game and we're gonna play it\n";
+  print "\n";
+  print "And if you ask me how I'm feeling\n";
+  print "Don't tell me you're too blind to see\n";
+  &RRRefrain;
+  &RRRefrain;
+  print "(Ooh, give you up)\n";
+  print "(Ooh, give you up)\n";
+  print "Never gonna give, never gonna give\n";
+  print "(Give you up)\n";
+  print "Never gonna give, never gonna give\n";
+  print "(Give you up)\n";
+  print "\n";
+  print "We've known each other for so long\n";
+  print "Your heart's been aching, but you're too shy to say it\n";
+  print "Inside, we both know what's been going on\n";
+  print "We know the game and we're gonna play it\n";
+  print "\n";
+  print "I just wanna tell you how I'm feeling\n";
+  print "Gotta make you understand\n";
+  &RRRefrain;
+  &RRRefrain;
+}
+
+sub RRRefrain {
+print "\n";
+print "Never gonna give you up\n";
+print "Never gonna let you down\n";
+print "Never gonna run around and desert you\n";
+print "Never gonna make you cry\n";
+print "Never gonna say goodbye\n";
+print "Never gonna tell a lie and hurt you\n";
+print "\n";
+}
+
+
 sub Get_GGTT {
   my $TransFilesDir="/opt/log/Accuroam/";
   my $FileBase=$TransFilesDir."trans.log.*";
   my @ProcessMe;
-  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $TimeStamp;
-  my $PopulateCallCount=0;
-  my $SIPID;
-  my $SIPStatus;
+  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $Mili; my $TimeStamp;
+  my $GDID; my $SIPStatus; my $DeviceID;
+
+  $PopulateCallCount=0;
 
   $DateStart =~ /(\d\d\d\d\/\d\d\/\d\d)_/;
   my $Start=$1;
@@ -2281,68 +2412,178 @@ sub Get_GGTT {
     }
   }
   close(INPUT);
+  @ProcessMe=sort(@ProcessMe);
   foreach my $Loop (@ProcessMe) {
     print "Processing $Loop: ACID :$ACID:\n" if ( $Verbose );
     open(INPUT, "/bin/grep $ACID $Loop |");
     while(<INPUT>) {
       chomp;
       my $Line = $_;
-      if ( /,SipCall,/) {
-        my @Line=split(',', $Line);
-
-        my $DateTime=$Line[1];
-        $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
-
-        $Day=$1;
-        $Mon=$2;
-        $Year=$3;
-        $Hour=$4;
-        $Min=$5;
-        $Sec=$6;
-
-        $SIPStatus=$Line[8];
-        $SIPStatus="Started" if ( $SIPStatus eq "0200" );
-        $SIPID=$Line[9];
-
-        $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",000000";
-
-        if ( $SIPStatus eq "Started") {
-          $PopulateCallCount++;
-          print "  $TimeStamp - Added a call in $Loop. CallCount :$PopulateCallCount: SIPID :$SIPID:.\n" if ( $Verbose );
-          print "    $Line\n" if ( $Verbose );
-        } else {
-          print "  $TimeStamp - Call error $SIPStatus in $Loop. CallCount :$PopulateCallCount: SIPID :$SIPID:.\n" if ( $Verbose );
-          print "    $Line\n" if ( $Verbose );
-        }
-          #print "$TimeStamp GGTT: Call Started, SIPID $SIPID\n";
-        push(@CallData, "$TimeStamp GGTT: Call $SIPStatus, SIPID $SIPID");
-        push(@LogLines, "$TimeStamp GGTT: Call #$PopulateCallCount $SIPStatus, SIPID $SIPID");
-      }
-      if ( /,SipCallEnded,/) {
-        my @Line=split(',', $Line);
-
-        my $DateTime=$Line[1];
-        $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
-
-        $Day=$1;
-        $Mon=$2;
-        $Year=$3;
-        $Hour=$4;
-        $Min=$5;
-        $Sec=$6;
-
-        $SIPID=$Line[9];
-
-        $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",000000";
-        print "  $TimeStamp - Closed a call in $Loop CallCount :$PopulateCallCount: SIPID :$SIPID:.\n" if ( $Verbose );
-        print "    $Line\n" if ( $Verbose );
-        #push(@CallData, "$TimeStamp GGTT: Call #$PopulateCallCount Closed, SIPID $SIPID");
-        push(@CallData, "$TimeStamp GGTT: Call Closed, SIPID $SIPID");
-        push(@LogLines, "$TimeStamp GGTT: Call #$PopulateCallCount Closed, SIPID $SIPID");
-        $PopulateCallCount--;
-      }
+      $csv->parse( $Line );
+      my @Line=$csv->fields( );
+      my $Type=$Line[5];
+      &Process_MOSipCall(@Line) if ( $Type eq "SipCall" );
+      &Process_MOSipCallEnded(@Line) if ( $Type eq "SipCallEnded" );
+      &Process_MTSipCall(@Line) if ( $Type eq "SipMtCall" );
+      &Process_MTSipCallEnded(@Line) if ( $Type eq "SipMtCallEnded" );
     }
   }
+}
+
+
+sub Process_MOSipCall {
+  my (@Line)=@_;
+  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $Mili; my $TimeStamp;
+  my $GDID; my $SIPStatus; my $DeviceID; my $Result;
+
+  my $DateTime=$Line[2];
+  $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
+
+  $Day=$1;
+  $Mon=$2;
+  $Year=$3;
+  $Hour=$4;
+  $Min=$5;
+  $Sec=$6;
+  $Mili="000000";
+
+  $SIPStatus=$Line[8];
+  $SIPStatus="Started" if ( $SIPStatus eq "0200" );
+  $GDID=$Line[9];
+  $DeviceID=$Line[19];
+  $DeviceID =~ s/.*msisdn><uagent>//;
+  $DeviceID =~ s,</uagent>.*,,;
+  $Result=$Line[29];
+
+  $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",".$Mili;
+
+  if ( $SIPStatus eq "Started") {
+    $PopulateCallCount++;
+    print "  $TimeStamp - Added a call in $Loop. CallCount :$PopulateCallCount: GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+    print "    $Line\n" if ( $Verbose );
+  } else {
+    print "  $TimeStamp - Call error $SIPStatus in $Loop. CallCount :$PopulateCallCount: GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+    print "    $Line\n" if ( $Verbose );
+  }
+  push(@CallData, "$TimeStamp GGTT: Mobile Orig Call $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+  push(@LogLines, "$TimeStamp GGTT: Mobile Orig Call #$PopulateCallCount $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+}
+
+
+sub Process_MOSipCallEnded {
+  my (@Line)=@_;
+  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $Mili; my $TimeStamp;
+  my $GDID; my $SIPStatus; my $DeviceID; my $Result;
+
+  my $DateTime=$Line[2];
+  $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
+
+  $Day=$1;
+  $Mon=$2;
+  $Year=$3;
+  $Hour=$4;
+  $Min=$5;
+  $Sec=$6;
+  $Mili="000000";
+
+  $GDID=$Line[9];
+  $DeviceID=$Line[19];
+  $DeviceID =~ s/.*msisdn><uagent>//;
+  $DeviceID =~ s,</uagent>.*,,;
+  $Result=$Line[27];
+
+  $SIPStatus=$Line[8];
+  $SIPStatus="Closed" if ( $SIPStatus eq "0000" );
+  
+  # Throw away, captured in SipCall
+  return if ( $Result eq "CallNotConnected");
+
+  $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",".$Mili;
+  print "  $TimeStamp - Closed a call in $Loop CallCount :$PopulateCallCount: GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+  print "    $Line\n" if ( $Verbose );
+  push(@CallData, "$TimeStamp GGTT: Mobile Orig Call Closed, GDID $GDID, DeviceID $DeviceID, Result $Result");
+  push(@LogLines, "$TimeStamp GGTT: Mobile Orig Call #$PopulateCallCount $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+  $PopulateCallCount--;
+  # It's possible due to timezones and logs a call End was listed before a beginning.  Nullify that.
+  $PopulateCallCount=0 if ( $PopulateCallCount < 0 );
+}
+
+
+sub Process_MTSipCall {
+  my (@Line)=@_;
+  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $Mili; my $TimeStamp;
+  my $GDID; my $SIPStatus; my $DeviceID; my $Result;
+
+  my $DateTime=$Line[2];
+  $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
+
+  $Day=$1;
+  $Mon=$2;
+  $Year=$3;
+  $Hour=$4;
+  $Min=$5;
+  $Sec=$6;
+  $Mili="000000";
+
+  $SIPStatus=$Line[8];
+  $SIPStatus="Started" if ( $SIPStatus eq "0200" );
+  $GDID=$Line[9];
+  $DeviceID=$Line[22];
+  $DeviceID =~ s/.*msisdn><uagent>//;
+  $DeviceID =~ s,</uagent>.*,,;
+  $Result=$Line[29];
+
+  $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",".$Mili;
+
+  if ( $SIPStatus eq "Started") {
+    $PopulateCallCount++;
+    print "  $TimeStamp - Added a call in $Loop. CallCount :$PopulateCallCount: GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+    print "    $Line\n" if ( $Verbose );
+  } else {
+    print "  $TimeStamp - Call error $SIPStatus in $Loop. CallCount :$PopulateCallCount: GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+    print "    $Line\n" if ( $Verbose );
+  }
+  push(@CallData, "$TimeStamp GGTT: Mobile Term Call $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+  push(@LogLines, "$TimeStamp GGTT: Mobile Term Call #$PopulateCallCount $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+}
+
+
+sub Process_MTSipCallEnded {
+  my (@Line)=@_;
+  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $Mili; my $TimeStamp;
+  my $GDID; my $SIPStatus; my $DeviceID; my $Result;
+
+  my $DateTime=$Line[2];
+  $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
+
+  $Day=$1;
+  $Mon=$2;
+  $Year=$3;
+  $Hour=$4;
+  $Min=$5;
+  $Sec=$6;
+  $Mili="000000";
+
+  $GDID=$Line[9];
+  $DeviceID=$Line[22];
+  $DeviceID =~ s/.*msisdn><uagent>//;
+  $DeviceID =~ s,</uagent>.*,,;
+  $Result=$Line[27];
+
+  $SIPStatus=$Line[8];
+  $SIPStatus="Closed" if ( $SIPStatus eq "0000" );
+  
+  # Throw away, captured in SipCall
+  return if ( $Result eq "CallNotConnected");
+
+  $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",".$Mili;
+  print "  $TimeStamp - Closed a call in $Loop CallCount :$PopulateCallCount: GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+  print "    $Line\n" if ( $Verbose );
+  push(@CallData, "$TimeStamp GGTT: Mobile Term Call Closed, GDID $GDID, DeviceID $DeviceID, Result $Result");
+  push(@LogLines, "$TimeStamp GGTT: Mobile Term Call #$PopulateCallCount $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+  $PopulateCallCount--;
+  # It's possible due to timezones and logs a call End was listed before a beginning.  Nullify that.
+  $PopulateCallCount=0 if ( $PopulateCallCount < 0 );
 }
 
 
@@ -2621,15 +2862,17 @@ sub Create_KML {
     print OUTPUT "      </Pair>\n";
     print OUTPUT "    </StyleMap>\n";
     foreach my $Loop ( @GGTTData ) {
-      $Loop =~ /(.*) GGTT: LastLat (.*), LastLon (.*), LastAlt (.*), (\w+) (.*), SIPID (.*)/;
+      $Loop =~ /(.*) GGTT: Direction (.*), LastLat (.*), LastLon (.*), LastAlt (.*), (.*) (\d+), GDID (.*), DeviceID (.*)/;
       my $Time=$1;
-      my $Lat=$2;
-      my $Lon=$3;
-      my $Alt=$4;
+      my $Direction=$2;
+      my $Lat=$3;
+      my $Lon=$4;
+      my $Alt=$5;
         $Alt=$Alt+100;
-      my $State=$5;
-      my $Count=$6;
-      my $SIPID=$7;
+      my $State=$6;
+      my $Count=$7;
+      my $GDID=$8;
+      my $DeviceID=$9;
       my $GGTTColor;
       print OUTPUT "    <Placemark>\n";
       my ( undef, $TS )=split(' ', $Time); 
@@ -2656,6 +2899,18 @@ sub Create_KML {
       print OUTPUT "        <Data name=\"Time\">\n";
       print OUTPUT "          <value>$Time CT </value>\n";
       print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Direction\">\n";
+      print OUTPUT "          <value>$Direction</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"GDID\">\n";
+      print OUTPUT "          <value>$GDID</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"DeviceID\">\n";
+      print OUTPUT "          <value>$DeviceID</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Call Count\">\n";
+      print OUTPUT "          <value>$Count</value>\n";
+      print OUTPUT "        </Data>\n";
       print OUTPUT "        <Data name=\"Lat\">\n";
       print OUTPUT "          <value>$Lat</value>\n";
       print OUTPUT "        </Data>\n";
@@ -2664,12 +2919,6 @@ sub Create_KML {
       print OUTPUT "        </Data>\n";
       print OUTPUT "        <Data name=\"Alt\">\n";
       print OUTPUT "          <value>$Alt</value>\n";
-      print OUTPUT "        </Data>\n";
-      print OUTPUT "        <Data name=\"SIPID \">\n";
-      print OUTPUT "          <value>$SIPID</value>\n";
-      print OUTPUT "        </Data>\n";
-      print OUTPUT "        <Data name=\"Call Count\">\n";
-      print OUTPUT "          <value>$Count</value>\n";
       print OUTPUT "        </Data>\n";
       print OUTPUT "      </ExtendedData>\n";
       print OUTPUT "      <Point>\n";
@@ -2947,6 +3196,7 @@ sub Create_KML {
   print OUTPUT "    <name>Datapoints</name>\n";
 
   foreach my $Loop ( @AirlinkData ) {
+#print "\$Loop :$Loop:\n";
     my @SINR;
     my $SINRV;
     my $ASINR;
@@ -3227,10 +3477,6 @@ sub Create_KML {
   }
   print OUTPUT "  </Folder>\n";
   # End of Reboots
-
-  
-
-
 
   # Close the KML
   print OUTPUT "</Document>\n";
