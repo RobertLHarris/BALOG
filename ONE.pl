@@ -248,6 +248,7 @@ my $Repeats;
 my @AirlinkData;
 my @RebootData;
 my @GGTTData;
+my @GGTTSMSData;
 my @CallData;
 
 #
@@ -474,12 +475,12 @@ foreach $Line ( @LogLines ) {
   &Process_ACM_Status("$Line") if ( $Line =~ /downloadFileFromACM\(\): ConfigurationModuleConstants.ACM_CONNECTED_STATUS/ );
   &Process_ACM_File_Read("$Line") if ( $Line =~ /ACM: In DownLoad: listACMFiles: No. of Files in ACM is: / );
   &Process_ACM_FTP_Read("$Line") if ( $Line =~ /ACM: ConnectACM: Establish FTP Connection for 3 time/ );
-  &Process_ACM_Read_Fail("$Line")  if ( $Line =~ /ACM: In DownLoad: listACMFiles: Unable to Read the ACM/ );
   &Process_ACM_Read_Fail_2_1("$Line")  if ( $Line =~ /FTP Connection Successful with Configuration Module. No. of Files in ACM is :/ );
   # Get KML Data
   &Process_Airlink("$Line") if ( $Line =~ / Airlink: / );
   # Get GGTT Data
   &Process_GGTT("$Line") if ( $Line =~ / GGTT: / );
+  &Process_GGTTSMS("$Line") if ( $Line =~ / GGTTSMS: / );
   # Capture Drift Changes
   &Process_DriftLine("$Line") if ( $Line =~ / Drift: / );
 
@@ -520,8 +521,8 @@ foreach $Line ( @LogLines ) {
 &Display_SA if ( $opt_SA );
 &Display_Report if ( $opt_Report );
 &Display_Provisioning if ( $opt_Prov );
-&Create_KML if ( $KML );
 &RickRoll if ( $opt_RR );
+&Create_KML if ( $KML );
 
 # Nothing to see below here, move along citizen. 
 exit 0;
@@ -2017,21 +2018,6 @@ sub Process_ATG_retrieveFiles {
 }
 
 
-sub Process_ACM_Read_Fail {
-  my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) .* *ACM: In DownLoad: listACMFiles: Unable to Read the ACM/;
-
-
-  my $Date=$1;
-  my $Device=$2;
-
-  push(@Altitudes,"  ACM Read Failures!");
-  $Errors{"ACMReadFail"}="ATG was unable to read the ACM Config files!";
-  $Errors{"ACMReadFail-01"}="  * Found at $Date";
-  $Errors{"ACMReadFail-02"}="  * This COULD mean configuration options are corrupt or missing ( i.e. Software Keys ).";
-}
-
-
 sub Process_ACM_FTP_Fail {
   my $StateLine=$_[0];
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) .*ConnectACM: Establish FTP Connection for 3 time/;
@@ -2238,24 +2224,48 @@ sub Process_Airlink {
 sub Process_GGTT {
   my $Line=$_[0];
   my $GGTTLine;
-  
-  $Line =~ /(.*) GGTT: (.*) Call #-*\d+ (.*), GDID (.*), DeviceID (.*)/;
+ 
+  $Line =~ /(.*) GGTT: (.*) Call #-*\d+ (.*), GDID (.*), DeviceID (.*), Result (.*)/;
   my $TimeStamp=$1;
   my $Direction=$2;
   my $Change=$3;
   my $GDID=$4;
   my $DeviceID=$5;
+  my $Result=$6;
 
   if ( $Change =~ /Started/ ) {
     $CallCount++;
-    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Started $CallCount, GDID $GDID, DeviceID $DeviceID";
+    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Started $CallCount, GDID $GDID, DeviceID $DeviceID, Result $Result";
   } elsif ( $Change =~ /Closed/ ) {
     $CallCount--;
-    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Closed $CallCount, GDID $GDID, DeviceID $DeviceID";
+    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, Closed $CallCount, GDID $GDID, DeviceID $DeviceID, Result $Result";
   } else {
-    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, $Change $CallCount, GDID $GDID, DeviceID $DeviceID";
+    $GGTTLine="$TimeStamp GGTT: Direction $Direction, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, $Change $CallCount, GDID $GDID, DeviceID $DeviceID, Result $Result";
   }
   push(@GGTTData, $GGTTLine);
+}
+
+
+sub Process_GGTTSMS {
+  my $Line=$_[0];
+  my $GGTTLine;
+
+  $Line =~ /(.*) GGTTSMS: (.*), Status (.*), GDID (.*), DeviceID (.*), Result (.*)/;
+  my $TimeStamp=$1;
+  my $Direction=$2;
+  my $Status=$3;
+  my $GDID=$4;
+  my $DeviceID=$5;
+  my $Result=$6;
+
+  if ( $Direction =~ /Sent/ ) {
+    $GGTTLine="$TimeStamp GGTTSMS: Direction $Direction, Status $Status, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, GDID $GDID, DeviceID $DeviceID, Result $Result";
+  } elsif ( $Direction =~ /Closed/ ) {
+    $GGTTLine="$TimeStamp GGTTSMS: Direction $Direction, Status $Status, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, GDID $GDID, DeviceID $DeviceID, Result $Result";
+  } else {
+    $GGTTLine="$TimeStamp GGTTSMS: Direction $Direction, Status $Status, LastLat $LastLat, LastLon $LastLon, LastAlt $LastAlt, GDID $GDID, DeviceID $DeviceID, Result $Result";
+  }
+  push(@GGTTSMSData, $GGTTLine);
 }
 
 
@@ -2336,7 +2346,7 @@ sub Get_DRC {
 sub RickRoll {
   print "\n";
   print "\n";
-  print "And now for something completely different\n";
+  print "** And now for something completely different\n";
   print "\n";
   print "We're no strangers to love\n";
   print "You know the rules and so do I\n";
@@ -2422,12 +2432,102 @@ sub Get_GGTT {
       $csv->parse( $Line );
       my @Line=$csv->fields( );
       my $Type=$Line[5];
+      # Text Messages
+      &Process_SipMessage(@Line) if ( $Type eq "SipMessage" );
+      &Process_MapMtShortMessage(@Line) if ( $Type eq "MapMtShortMessage" );
+      # SipCalls/xxx
       &Process_MOSipCall(@Line) if ( $Type eq "SipCall" );
       &Process_MOSipCallEnded(@Line) if ( $Type eq "SipCallEnded" );
       &Process_MTSipCall(@Line) if ( $Type eq "SipMtCall" );
       &Process_MTSipCallEnded(@Line) if ( $Type eq "SipMtCallEnded" );
     }
   }
+}
+
+
+sub Process_SipMessage {
+  my (@Line)=@_;
+  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $Mili; my $TimeStamp;
+  my $GDID; my $SIPStatus; my $DeviceID; my $Result;
+
+  my $DateTime=$Line[2];
+  $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
+
+  #my ( undef, $LogTime, $CallStart, undef, undef, $Action, $TransID, undef, $SipCode, $SIPID, undef, $Callee, $Content, undef, undef, $ID, undef, undef, undef, undef, undef, $Result) = $csv->fields();
+
+  $Day=$1;
+  $Mon=$2;
+  $Year=$3;
+  $Hour=$4;
+  $Min=$5;
+  $Sec=$6;
+  $Mili="000000";
+
+  $SIPStatus=$Line[8];
+  $SIPStatus="Sent" if ( $SIPStatus eq "0200" );
+  $GDID=$Line[9];
+  $DeviceID=$Line[15];
+  $DeviceID =~ s/.*msisdn><uagent>//;
+  $DeviceID =~ s,</uagent>.*,,;
+  $Result=$Line[28];
+
+  $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",".$Mili;
+
+  if ( $SIPStatus eq "Sent") {
+    $PopulateCallCount++;
+    print "  $TimeStamp - Sent a SMS Message GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+    print "    $Line\n" if ( $Verbose );
+  } else {
+    print "  $TimeStamp - SMS Message error $SIPStatus in $Loop. GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+    print "    $Line\n" if ( $Verbose );
+  }
+  push(@CallData, "$TimeStamp GGTTSMS: SipMessage, Status $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+  push(@LogLines, "$TimeStamp GGTTSMS: SipMessage, Status $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+}
+
+
+sub Process_MapMtShortMessage {
+  my (@Line)=@_;
+  my $Day; my $Mon; my $Year; my $Hour; my $Min; my $Sec; my $Mili; my $TimeStamp;
+  my $GDID; my $SIPStatus; my $DeviceID; my $Result;
+
+  my $DateTime=$Line[2];
+  $DateTime =~ /(\d\d):(\d\d):(\d\d\d\d)-(\d\d):(\d\d):(\d\d)/;
+
+#foreach my $Loop (0..$#Line) {
+#  print "\$Line[$Loop] :$Line[$Loop]:\n";
+#}
+
+#  my ( undef, $LogTime, $CallStart, undef, undef, $Action, $TransID, undef, $SipCode, $SIPID, $Callee, $Length, $Content, undef, undef, undef, $ID, undef, undef, $Result) = $csv->fields();
+
+  $Day=$1;
+  $Mon=$2;
+  $Year=$3;
+  $Hour=$4;
+  $Min=$5;
+  $Sec=$6;
+  $Mili="000000";
+
+  $SIPStatus=$Line[8];
+  $SIPStatus="Received" if ( $SIPStatus eq "0000" );
+  $GDID=$Line[20];
+  $DeviceID=$Line[16];
+  $DeviceID =~ s/.*msisdn><uagent>//;
+  $DeviceID =~ s,</uagent>.*,,;
+  $Result=$Line[22];
+
+  $TimeStamp=$Year."-".$Mon."-".$Day." ".$Hour.":".$Min.":".$Sec.",".$Mili;
+
+  if ( $SIPStatus eq "Sent") {
+    $PopulateCallCount++;
+    print "  $TimeStamp - Sent a SMS Message GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+    print "    $Line\n" if ( $Verbose );
+  } else {
+    print "  $TimeStamp - SMS Message error $SIPStatus in $Loop. GDID :$GDID: DeviceID :$DeviceID: Result :$Result:\n" if ( $Verbose );
+    print "    $Line\n" if ( $Verbose );
+  }
+  push(@CallData, "$TimeStamp GGTTSMS: SipMtMessage, Status $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
+  push(@LogLines, "$TimeStamp GGTTSMS: SipMtMessage, Status $SIPStatus, GDID $GDID, DeviceID $DeviceID, Result $Result");
 }
 
 
@@ -2590,8 +2690,9 @@ sub Process_MTSipCallEnded {
 sub Create_KML {
 
   my $Date=$Start."-".$End;
-  my $TargetFile="/var/www/html/KML/InfOps_".$Tail."-".$DateRange.".kml";
-  my $TargetFileURL="http://10.241.1.132/KML/InfOps_".$Tail."-".$DateRange.".kml";
+  my $TmpFile="/var/www/html/KML/InfOps_".$Tail."-".$DateRange.".kml";
+  my $TargetFile="/var/www/html/KML/InfOps_".$Tail."-".$DateRange.".kmz";
+  my $TargetFileURL="http://10.241.1.132/KML/InfOps_".$Tail."-".$DateRange.".kmz";
   my $Time; my $Lat; my $Lon; my $Alt; my $DRC; my $SINR; my $Cell; my $Sector;
   my $PPN; my $TxA; my $RxA0; my $RxA1;
   my $LabelScale;
@@ -2604,7 +2705,7 @@ sub Create_KML {
   $LabelScale=1.0;
 
   print "Creating KML file $TargetFileURL\n";
-  open(OUTPUT, ">$TargetFile") or die "Can't open $TargetFile :$?: :$!:\n";
+  open(OUTPUT, ">$TmpFile") or die "Can't open $TmpFile :$?: :$!:\n";
 
   # Print Header Info
   print OUTPUT "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
@@ -2612,11 +2713,11 @@ sub Create_KML {
   
   # Start the Doc
   print OUTPUT "<Document>\n";
-  
   print OUTPUT "  <name>Flight of $Tail on $DateStart</name>\n";
+  print OUTPUT "  <open>1</open>\n";
   print OUTPUT "  <LookAt id=\"\">\n";
   print OUTPUT "    <altitude>1</altitude>\n";
-  print OUTPUT "    <heading>6</heading>\n";
+  print OUTPUT "    <heading>0</heading>\n";
   print OUTPUT "    <latitude>38</latitude>\n";
   print OUTPUT "    <longitude>-98</longitude>\n";
   print OUTPUT "    <range>4000000</range>\n";
@@ -2635,8 +2736,9 @@ sub Create_KML {
   # Moving this earlier to put on top of the Green Circles 
   # IF GGTT selected 
   if ( $GGTT_Enable ) {
+    # GGTT Call Data
     print OUTPUT "  <Folder>\n";
-    print OUTPUT "    <name>GGTT Data</name>\n";
+    print OUTPUT "    <name>GGTT Call Data</name>\n";
     # Define the Styles ( which go in the MAPS ) for GGTT
     # Call Error
     # Red
@@ -2862,7 +2964,7 @@ sub Create_KML {
     print OUTPUT "      </Pair>\n";
     print OUTPUT "    </StyleMap>\n";
     foreach my $Loop ( @GGTTData ) {
-      $Loop =~ /(.*) GGTT: Direction (.*), LastLat (.*), LastLon (.*), LastAlt (.*), (.*) (\d+), GDID (.*), DeviceID (.*)/;
+      $Loop =~ /(.*) GGTT: Direction (.*), LastLat (.*), LastLon (.*), LastAlt (.*), (.*) (\d+), GDID (.*), DeviceID (.*), Result (.*)/;
       my $Time=$1;
       my $Direction=$2;
       my $Lat=$3;
@@ -2873,6 +2975,7 @@ sub Create_KML {
       my $Count=$7;
       my $GDID=$8;
       my $DeviceID=$9;
+      my $Result=$10;
       my $GGTTColor;
       print OUTPUT "    <Placemark>\n";
       my ( undef, $TS )=split(' ', $Time); 
@@ -2895,12 +2998,28 @@ sub Create_KML {
         print OUTPUT "      <styleUrl>#BA-Style-".$Type."-".$GGTTColor."-Map</styleUrl>\n";
       }
       print OUTPUT "      <name>Call $State at $TSShort CT </name>\n";
+      print OUTPUT "  <LookAt id=\"\">\n";
+      print OUTPUT "    <altitude>1</altitude>\n";
+      print OUTPUT "    <heading>0</heading>\n";
+      print OUTPUT "    <latitude>$Lat</latitude>\n";
+      print OUTPUT "    <longitude>$Lon</longitude>\n";
+      print OUTPUT "    <range>400000</range>\n";
+      print OUTPUT "    <tilt>3</tilt>\n";
+      print OUTPUT "  </LookAt>\n";
+      my $TSMark=$Time;
+      $TSMark =~ s/ /T/g;
+      $TSMark =~ s/,\d+//;
+      $TSMark =~ s/$/Z/g;
+      print OUTPUT "      <TimeStamp><when>$TSMark></when></TimeStamp>\n";
       print OUTPUT "      <ExtendedData>\n";
       print OUTPUT "        <Data name=\"Time\">\n";
       print OUTPUT "          <value>$Time CT </value>\n";
       print OUTPUT "        </Data>\n";
       print OUTPUT "        <Data name=\"Direction\">\n";
       print OUTPUT "          <value>$Direction</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Result\">\n";
+      print OUTPUT "          <value>$Result</value>\n";
       print OUTPUT "        </Data>\n";
       print OUTPUT "        <Data name=\"GDID\">\n";
       print OUTPUT "          <value>$GDID</value>\n";
@@ -2927,10 +3046,368 @@ sub Create_KML {
       print OUTPUT "      </Point>\n";
       print OUTPUT "    </Placemark>\n";
     }
+    print OUTPUT "  </Folder>\n";
+    # GGTT SMS Data
+    print OUTPUT "  <Folder>\n";
+    print OUTPUT "    <name>GGTT SMS Data</name>\n";
+    # Define the Styles ( which go in the MAPS ) for GGTT
+    # Call Error
+    # Red
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMessage-Error-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>https://maps.google.com/mapfiles/kml/shapes/earthquake.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMessage-Error-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>https://maps.google.com/mapfiles/kml/shapes/earthquake.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Call Started
+    # Red
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMessage-Red-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+#    print OUTPUT "          <href>http://maps.google.com/mapfiles/kml/shapes/phone.png</href>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMessage-Red-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Green
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMessage-Green-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF00FF00</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScale</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMessage-Green-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF00FF00</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScale</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Call Ended
+    # Error
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMt-Error-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office-90.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMt-Error-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office-90.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Red
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMt-Red-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office-90.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMt-Red-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF0000FF</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office-90.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScaleLarge</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Green
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMt-Green-Visible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF00FF00</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office-90.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScale</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>$LabelScale</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    #
+    print OUTPUT "    <Style id=\"BA-Style-GGTTSMS-SipMt-Green-InVisible\">\n";
+    print OUTPUT "      <IconStyle>\n";
+    print OUTPUT "        <color>FF00FF00</color>\n";
+    print OUTPUT "        <Icon>\n";
+    print OUTPUT "          <href>http://10.241.1.132/Icons/post_office-90.png</href>\n";
+    print OUTPUT "        </Icon>\n";
+    print OUTPUT "        <scale>$IconScale</scale>\n";
+    print OUTPUT "      </IconStyle>\n";
+    print OUTPUT "      <LabelStyle>\n";
+    print OUTPUT "        <scale>0</scale>\n";
+    print OUTPUT "      </LabelStyle>\n";
+    print OUTPUT "      <BalloonStyle>\n";
+    print OUTPUT "        <bgColor>FFFFFFFF</bgColor>\n";
+    print OUTPUT "      </BalloonStyle>\n";
+    print OUTPUT "    </Style>\n";
+    # Define Maps for the Colors
+    # GGTTSMS SipMessage
+    # Error
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTTSMS-SipMessage-Error-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMessage-Error-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMessage-Error-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # Red
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTTSMS-SipMessage-Red-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMessage-Red-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMessage-Red-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # Green
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTTSMS-SipMessage-Green-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMessage-Green-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMessage-Green-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # GGTT SipMT
+    # Error
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTTSMS-SipMt-Error-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMt-Error-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMt-Error-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # Red
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTTSMS-SipMt-Red-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMt-Red-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMt-Red-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    # Green
+    print OUTPUT "    <StyleMap id=\"BA-Style-GGTTSMS-SipMt-Green-Map\">\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>highlight</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMt-Green-Visible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "      <Pair>\n";
+    print OUTPUT "        <key>normal</key>\n";
+    print OUTPUT "        <styleUrl>#BA-Style-GGTTSMS-SipMt-Green-InVisible</styleUrl>\n";
+    print OUTPUT "      </Pair>\n";
+    print OUTPUT "    </StyleMap>\n";
+    foreach my $Loop ( @GGTTSMSData ) {
+      $Loop =~ /(.*) GGTTSMS: Direction (.*), Status (.*) LastLat (.*), LastLon (.*), LastAlt (.*), GDID (.*), DeviceID (.*), Result (.*)/;
+      my $Time=$1;
+      my $Direction=$2;
+      my $Status=$3;
+      my $Lat=$4;
+      my $Lon=$5;
+      my $Alt=$6;
+      my $GDID=$7;
+      my $DeviceID=$8;
+      my $Result=$9;
+      my $GGTTColor;
+        $Alt=$Alt+100;
+      print OUTPUT "    <Placemark>\n";
+      my ( undef, $TS )=split(' ', $Time); 
+      my ( $TSShort, undef )=split(',', $TS);
+      if ( $Result eq "Success" ) {
+        $GGTTColor="Green";
+      } else {
+        $GGTTColor="Red";
+      }
+      if ( $Direction eq "SipMessage" ) {
+        $Type="GGTTSMS-SipMessage";
+      } elsif ( $Direction eq "SipMtMessage" ) {
+        $Type="GGTTSMS-SipMt";
+      } else {
+        $Type="GGTTSMS-Error";
+      }
+      my $EngDirection;
+      if ( $Direction eq "SipMessage" ) {
+        $EngDirection="Mobile Orig";
+      } elsif ( $Direction eq "SipMtMessage" ) {
+        $EngDirection="Mobile Term";
+      } else {
+        $EngDirection="Unknonw, tell Robert";
+      }
+      print OUTPUT "      <styleUrl>#BA-Style-".$Type."-".$GGTTColor."-Map</styleUrl>\n";
+      print OUTPUT "      <name>SMS $EngDirection at $TSShort CT </name>\n";
+      print OUTPUT "  <LookAt id=\"\">\n";
+      print OUTPUT "    <altitude>1</altitude>\n";
+      print OUTPUT "    <heading>0</heading>\n";
+      print OUTPUT "    <latitude>$Lat</latitude>\n";
+      print OUTPUT "    <longitude>$Lon</longitude>\n";
+      print OUTPUT "    <range>400000</range>\n";
+      print OUTPUT "    <tilt>3</tilt>\n";
+      print OUTPUT "  </LookAt>\n";
+      my $TSMark=$Time;
+      $TSMark =~ s/ /T/g;
+      $TSMark =~ s/,\d+//;
+      $TSMark =~ s/$/Z/g;
+      print OUTPUT "      <TimeStamp><when>$TSMark></when></TimeStamp>\n";
+      print OUTPUT "      <ExtendedData>\n";
+      print OUTPUT "        <Data name=\"Time\">\n";
+      print OUTPUT "          <value>$Time CT </value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"EngDirection\">\n";
+      print OUTPUT "          <value>$EngDirection</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Status\">\n";
+      print OUTPUT "          <value>$Status</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Result\">\n";
+      print OUTPUT "          <value>$Result</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"GDID\">\n";
+      print OUTPUT "          <value>$GDID</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"DeviceID\">\n";
+      print OUTPUT "          <value>$DeviceID</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Lat\">\n";
+      print OUTPUT "          <value>$Lat</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Lon\">\n";
+      print OUTPUT "          <value>$Lon</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "        <Data name=\"Alt\">\n";
+      print OUTPUT "          <value>$Alt</value>\n";
+      print OUTPUT "        </Data>\n";
+      print OUTPUT "      </ExtendedData>\n";
+      print OUTPUT "      <Point>\n";
+      print OUTPUT "        <altitudeMode>absolute</altitudeMode>\n";
+      print OUTPUT "        <coordinates>$Lon,$Lat,$Alt</coordinates>\n";
+      print OUTPUT "      </Point>\n";
+      print OUTPUT "    </Placemark>\n";
+    }
+    print OUTPUT "  </Folder>\n";
+
   }
-  print OUTPUT "  </Folder>\n";
 
 
+  # Airlink Data Points
   print OUTPUT "  <Folder>\n";
   # Define the Styles ( which go in the MAPS ) for Airlink Data
   # UNKNOWN
@@ -3296,6 +3773,19 @@ sub Create_KML {
  
     print OUTPUT "      <styleUrl>#BA-Style-".$AircraftColor."-Map</styleUrl>\n";
     print OUTPUT "      <name>$TSShort UTC </name>\n";
+    print OUTPUT "  <LookAt id=\"\">\n";
+    print OUTPUT "    <altitude>1</altitude>\n";
+    print OUTPUT "    <heading>0</heading>\n";
+    print OUTPUT "    <latitude>$Lat</latitude>\n";
+    print OUTPUT "    <longitude>$Lon</longitude>\n";
+    print OUTPUT "    <range>400000</range>\n";
+    print OUTPUT "    <tilt>3</tilt>\n";
+    print OUTPUT "  </LookAt>\n";
+    my $TSMark=$Time;
+    $TSMark =~ s/ /T/g;
+    $TSMark =~ s/,\d+//;
+    $TSMark =~ s/$/Z/g;
+    print OUTPUT "      <TimeStamp><when>$TSMark></when></TimeStamp>\n";
     print OUTPUT "      <ExtendedData>\n";
     print OUTPUT "        <Data name=\"Time\">\n";
     print OUTPUT "          <value>$Time UTC </value>\n";
@@ -3434,6 +3924,19 @@ sub Create_KML {
     my ( $TSShort, undef )=split(',', $TS);
     print OUTPUT "      <styleUrl>#BA-Style-Reboot-Map</styleUrl>\n";
     print OUTPUT "      <name>Power Reset at $TSShort UTC </name>\n";
+    print OUTPUT "  <LookAt id=\"\">\n";
+    print OUTPUT "    <altitude>1</altitude>\n";
+    print OUTPUT "    <heading>0</heading>\n";
+    print OUTPUT "    <latitude>$Lat</latitude>\n";
+    print OUTPUT "    <longitude>$Lon</longitude>\n";
+    print OUTPUT "    <range>400000</range>\n";
+    print OUTPUT "    <tilt>3</tilt>\n";
+    print OUTPUT "  </LookAt>\n";
+    my $TSMark=$Time;
+    $TSMark =~ s/ /T/g;
+    $TSMark =~ s/,\d+//;
+    $TSMark =~ s/$/Z/g;
+    print OUTPUT "      <TimeStamp><when>$TSMark></when></TimeStamp>\n";
     print OUTPUT "      <ExtendedData>\n";
     print OUTPUT "        <Data name=\"Time\">\n";
     print OUTPUT "          <value>$Time UTC </value>\n";
@@ -3482,6 +3985,9 @@ sub Create_KML {
   print OUTPUT "</Document>\n";
   print OUTPUT "</kml>\n";
   close(OUTPUT);
+#print "/bin/rm -f $TargetFile; /usr/bin/zip -q -9 $TargetFile $TmpFile && /bin/rm $TmpFile\n";
+  system("/bin/rm -f $TargetFile; /usr/bin/zip -q -9 $TargetFile $TmpFile && /bin/rm $TmpFile");
+  #system("/bin/rm -f $TargetFile; /usr/bin/zip -q -9 $TargetFile $TmpFile");
 }
 
 
