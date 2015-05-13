@@ -101,7 +101,6 @@ my $DateStart;
 my $DateEnd;
 #
 # Defining values for min/max's as spesified by Engr.
-my $BlessedATG="2.3";
 # Fans
 my $LockedFan=1318;  my $FanType=0;
 my $MaxFan=0;  
@@ -459,7 +458,8 @@ foreach $Line ( @LogLines ) {
   &Process_Ping_Latency_2_1("$Line") if ( $Line =~ /Conducting AAA Ping Test:./ );
   &Process_Ping_Threshold("$Line") if ( $Line =~ /PING_FAILURE_THRESHOLD...5/ );
   &Process_Signal_Strength("$Line") if ( $Line =~ /Signal Strength:/ );
-  &Process_Power_Reset("$Line") if ( $Line =~ /Last reset/ );
+#  &Process_Power_Reset("$Line") if ( $Line =~ /Last reset is due/ );
+  &Process_Reset("$Line") if ( $Line =~ /rebootReason : / );
   &Process_Link_Down("$Line") if ( $Line =~ /atgLink[Down|Up]/ );
   &Process_Authentication_Status("$Line") if ( $Line =~ /Authentication Status/ );
   &Process_new_subnet_mask("$Line") if ( $Line =~ /new_subnet_mask/ );
@@ -954,9 +954,6 @@ sub Process_Signal_Strength {
 
 sub Display_Errors {
   print "\n";
-  if ( $ATGVersion ne $BlessedATG ) {
-    $Investigation{"ATG Version"}="This ATG is on version $ATGVersion";
-  }
   print "Errors Found:\n"; 
   if ( $NetOpsNote{"0005-Console"} =~ /found 0 Console logs/ ) {
     print " ** No console logs found for this tail.  May need manual download.\n";
@@ -1284,6 +1281,32 @@ sub Process_Power_Reset {
       $Investigation{"PowerReset"}="  * This is the result of a user using a Discrete to reset the unit.";
       $RebootDataLine .= ", Reason: This is the result of a user using a Discrete to reset the unit.";
     }
+    push(@RebootData, $RebootDataLine);
+  }
+}
+
+
+sub Process_Reset {
+  my $StateLine=$_[0];
+
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) .*rebootReason : (.*) : updat/;
+  my $Time=$1;
+  my $Reset=$2;
+
+  if ( $Coverage !~ $Reset ) {
+    $Coverage=$Reset;
+    print "Pushing $Time -- $Reset\n" if ( $Verbose );
+    push(@Altitudes, "  * Power Reset        : $Time -- $Reset");
+    $Flight_State="NULL";
+    $PowerATGReset++;
+    $FlightPowerATGReset++;
+    $LastLat="Undefined" if ( !$LastLat );
+    $LastLon="Undefined" if ( !$LastLon );
+    $LastAlt="Undefined" if ( !$LastAlt );
+    $LastCell="Undefined" if ( !$LastCell );
+    $LastSector="Undefined" if ( !$LastSector );
+    my $RebootDataLine = "$Time PowerReset: Latitude $LastLat, Longitude $LastLon, Altitude $LastAlt, LastCell $LastCell, LastSector $LastSector, LastASA $ASA";
+    $Investigation{"ATG PowerReset"}="ATG was reset $PowerATGReset times due to $Reset.";
     push(@RebootData, $RebootDataLine);
   }
 }
