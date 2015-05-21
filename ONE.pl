@@ -3768,7 +3768,11 @@ sub Create_KML {
         for my $S (@SINR) {
           $SINRV += $S;
         }
-        $ASINR=sprintf("%.2f",($SINRV/($#SINR +1)));
+        if ( $#SINR < 1 ) {
+          $ASINR=0;
+        } else {
+          $ASINR=sprintf("%.2f",($SINRV/($#SINR +1)));
+        }
       }
     } else {
       $Loop =~ /(\d\d\d\d\-\d\d\-\d\d \d\d:\d\d:\d\d,\d+) Airlink: .*Aircard Latitude (.*) : Longitude (.*) : Altitude (.*), DRC_BUFFER (.*), BEST_ASP_SINR_BUFFER (.*), PILOT_PN_ASP (.*), Tx_AGC (.*), Rx_AGC0 (.*), Rx_AGC1 (.*), Cell (\d+), Sector (\d+), LastPacketLoss (.*), LastLatency (.*)/;
