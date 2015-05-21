@@ -269,8 +269,7 @@ sub ListATGSMFiles {
   if ( ! $opt_nas ) {
     # Lets get potential file list.
     print "Getting File List from $FileList\n" if ( $Verbose );
-    #open(INPUT, "ls -1 $FileList 2>/dev/null |");
-    open(INPUT, "ls -1 $FileList |");
+    open(INPUT, "ls -1 $FileList 2>/dev/null |");
     while(<INPUT>) {
       chomp;
       ($Year, $Mon, $Day, undef)=split('-', $_);
@@ -395,7 +394,6 @@ sub ImportATGSMFiles {
   my $TimeStamp; 
   my $Message;
   my $Lat; my $Lon; my $Alt; 
-  my $FlightXPOL=0;
   #
   $PushLine=0;
   my $Mili=0; my $MiliTmp="";
@@ -412,7 +410,6 @@ sub ImportATGSMFiles {
       next if ( /^$/ );
       next if ( /^console.log/ );
       $Line=$_;
-
 
       # Remove non-printable characters ( NOT the whole line )
       $Line =~ s/[^[:print:]]//g;
@@ -431,16 +428,11 @@ sub ImportATGSMFiles {
       $FileLineCount++;
 
       # New Data Block.  Push the previous Line and start over
-      if ( $Line =~ /\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\-*\d+\.\d+,-*\d+\.\d+,\d+/ ) {
+      if ( $Line =~ /^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,.*,.*,.*/ ) {
         $Line =~ /^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d),/;
           $TimeStamp=$1;
         $TimeStamp=&ConvertATGSMTimeStamp( $TimeStamp );
-        # Do we add this to the Flight XPol data?
-        if ( ( $TimeStamp > $StartStamp ) && ( $TimeStamp < $FinishStamp )) {
-          $FlightXPOL="1";
-        } else {
-          $FlightXPOL="0";
-        }
+
         $PushLine="$TimeStamp Airlink: $PushLine" if ( $PushLine );
         push(@LogLines, $PushLine) if ( $PushLine );
         $PushLine=0;
@@ -453,26 +445,8 @@ sub ImportATGSMFiles {
       &Process_SM_Sector_ID("$Line") if ( /^Serving_SectorID/ );
       #&Process_SM_SINR("$Line") if ( /^ASP_FILTERED_SINR/ );
       &Process_SM_SINR("$Line") if ( /^BEST_ASP_SINR_BUFFER/ );
-      push(@XPOL, $Line) if ( $FlightXPOL );
     }
     print "Loaded $FileLineCount lines.\n" if ( $Verbose );
-  }
-
-  # Get Flight Specific XPOL data
-  if ( @XPOL ) {
-    open(XPOLOUT, ">/tmp/$PID.txt");
-    foreach my $Loop (@XPOL) {
-      print XPOLOUT "$Loop\n";
-    }
-    close(XPOLOUT);
-    my $XPOLCounter=0;
-    open(XPOLIN, "/bin/cat /tmp/$PID.txt | /usr/local/bin/xpol.pl  |");
-    while(<XPOLIN>) {
-      chomp;
-      $NetOpsNotes{"XPOL_Line-$XPOLCounter"}="$_";
-      $XPOLCounter++;
-    }
-    close(XPOLIN);
   }
 }
 
@@ -963,6 +937,7 @@ sub ConvertATGSMTimeStamp {
   my $Line=$_[0];
   my $Time;
 
+  return if ( ! $Line );
   $Line =~ /^(\d\d\d\d)-(\d\d)-(\d\d) (\d\d):(\d\d):(\d\d)/;
 
   # - 2015-04-02 15:34:26,37.68,-97.63,4443
