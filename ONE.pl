@@ -818,14 +818,16 @@ sub Display_XPol {
       $XPFiles .= " $File";
     }
   }
-  open(GetXPol, "/bin/zcat $XPFiles | $XPolScript |") || die "Couldn't get X-Pol : $!";
-  while(<GetXPol>) {
-    chomp;
-    next if ( /^Tail/ );
-    if ( $_ ) {
-      $_ =~ s/ +//g;
-      @XPol=split(',', $_);
-      $XPol=1;
+  if ( $XPFiles ) {
+    open(GetXPol, "/bin/zcat $XPFiles | $XPolScript |") || die "Couldn't get X-Pol : $!";
+    while(<GetXPol>) {
+      chomp;
+      next if ( /^Tail/ );
+      if ( $_ ) {
+        $_ =~ s/ +//g;
+        @XPol=split(',', $_);
+        $XPol=1;
+      }
     }
   }
   close( GetXPol );
