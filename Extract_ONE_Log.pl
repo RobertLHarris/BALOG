@@ -362,6 +362,7 @@ sub ImportATGConsoleFiles {
       # Update Last to current for next test
       $LastLine=$Line;
 
+
       next unless $Line =~ /^\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\d+/;
       $Line =~ /^(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\d+) (.*)/;
         $TimeStamp=$1;
@@ -895,7 +896,7 @@ sub ConvertReadableTimeStamp {
   my ( undef, $Mili )=split('\.', $TS);
   my $Time;
 
-
+  $Mili="000000" if ( ! $Mili );
 #  $Time = timelocal($Sec,$Min,$Hour,$Day,$Mon,$Year);
   $Time = strftime '%Y-%m-%d %H:%M:%S'.",".$Mili, localtime $TS;
 
@@ -976,7 +977,11 @@ sub ConvertGPSTimeStamp {
   my $Year = $6;
 
   $Mon=$RMons{$TMon};
-  
+
+  if ( ( ! $Year ) || ( ! $Mon ) ) {
+    print " Problem with this line for $Tail.\n";
+    print "   $Line\n";
+  }
   my $Date = $Year."/".$Mon."/".$Day." ".$Hour.":".$Min.":".$Sec;
 
   $Mon=$Mon -1;
