@@ -41,7 +41,7 @@ my @TargetDates=(
 		#  "2015-05-20", "2015-05-21", "2015-05-22", "2015-05-23", "2015-05-24", "2015-05-25", "2015-05-26", "2015-05-27", "2015-05-28", "2015-05-29",
 		#  "2015-05-30", "2015-05-30", "2015-05-31",
 		#  "2015-06-01", "2015-06-02", "2015-06-03", "2015-06-04", "2015-06-05", "2015-06-06", "2015-06-07", "2015-06-08"
-		  "2015-06-01"
+		  "2015-06-15"
 		 );
 
 # Example URL Info
@@ -52,7 +52,6 @@ my %Calls;
 my $Counter=0;
 my $Key;
 my $Leg;
-my $Verbose=0;
 my $Testing=0;
 my $Printout=0;
 my $DBOut=1;
@@ -60,6 +59,8 @@ my $Loop;
 my $Insert;
 my @Output;
 my $Hour;
+
+my $Verbose=1 if ( $opt_v );
 
 # Target Ends
 #  /vq - Voice Quality
@@ -81,7 +82,7 @@ if ( ! $opt_D ) {
 foreach $TargetDate ( @TargetDates ) {
   print "Pulling Data for $TargetDate.\n" if ( $Verbose );
   @Output=();
-  foreach $Hour ( 0..23 ) {
+  foreach $Hour ( 0..0 ) {
     &Get_Calls($Hour);
   }
   print "Inserting $#Output Lines for hour $Hour\n" if ( $Verbose );
@@ -103,7 +104,7 @@ sub Get_Calls {
   my $User="admin:oracle";
   my $TargetBase="http://10.240.21.100/r/calls";
   my $TargetStart="$TargetDate+".$Hour.":00:00";
-  my $TargetStop="$TargetDate+".$Hour.":59:59";
+  my $TargetStop="$TargetDate+".$Hour.":19:59";
   my $Target=$TargetBase."/".$TargetStart."/".$TargetStop;
 
   print "Retrieving hour $Hour: $Target\n" if ( $Verbose );
@@ -125,9 +126,9 @@ sub Get_Calls {
 
   foreach my $Loop ( @{$DATA} ) {
     $Call=${$Loop}{call_id};
-#    next if ( $Call ne "6157840731357591101" );
+    #next if ( $Call ne "6160809412752578014" );
     print "Loop Data\n" if ( $Verbose );
-    print Dumper $Loop if ( $Verbose );
+#    print Dumper $Loop if ( $Verbose );
     print "Main Call :$Call:\n" if ( $Verbose );
     $Leg=0;
 
@@ -135,15 +136,11 @@ sub Get_Calls {
     foreach my $CallDetails ( keys( %{$Loop} ) ) {
       ${$Loop}{$CallDetails}="NULL" if ( !${$Loop}{$CallDetails} );
       print "  Loop \${$Loop}{$CallDetails} :${$Loop}{$CallDetails}:\n" if ( $Verbose );
-      print "  \$Leg :$Leg:\n" if ( $Verbose );
       $Key=$Call.".".$Leg.".".$CallDetails;
       print "$Key : $Key\n" if ( $Printout );
       $Insert="$Call,$Leg,$CallDetails,${$Loop}{$CallDetails}" if ( $DBOut );
       my $RefType = reftype ${$Loop}{$CallDetails};
-      print "\$RefType :$RefType:\n" if ( $Verbose );
-      print "\$DBOut :$DBOut:\n" if ( $Verbose );
       push(@Output, "$Insert") if ( ( $DBOut )  && ( ! $RefType )  );
-      print "Inserting : $Insert\n" if ( ( $DBOut )  && ( ! $RefType ) && ( $Verbose ) ) ;
     }
 
     &Get_Details( $Call, ${$Loop}{"url"});
@@ -159,6 +156,9 @@ sub Get_Details {
   my $Call=$_[0];
   my $URL=$_[1];
   print "\$URL :$URL:\n" if ( $Verbose );
+
+  my $Value;
+
 
   my $User="admin:oracle";
   my $TargetBase="http://10.240.21.100/";
@@ -179,10 +179,46 @@ sub Get_Details {
   my $SRC = $Converter->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($JSONString) || die "Can't decode $JSONString :$!:\n";
   print Dumper $SRC if ( $Verbose );
 
-  foreach my $VQ ( keys( %{$SRC} ) ) {
-    if ( ${$SRC}{$VQ} ) {
-      print "\${$SRC}{$VQ} :${$SRC}{$VQ}:\n" if ( $Verbose );
-      &Process_Value( $Call, ${$SRC}{$VQ} );
+  foreach my $Details ( keys( %{$SRC} ) ) {
+    $Leg=0;
+    if ( ${$SRC}{$Details} ) {
+      print "\${$SRC}{$Details} :${$SRC}{$Details}:\n" if ( $Verbose );
+      # Insert Details
+      my $RefType = reftype ${$SRC}{$Details};
+      if ( ! $RefType ) {
+        ${$SRC}{$Details}="NULL" if ( !${$SRC}{$Details} );
+        print "  Loop \${$SRC}{$Details} :${$SRC}{$Details}:\n" if ( $Verbose );
+        print "  \$Leg :$Leg:\n" if ( $Verbose );
+        $Key=$Details;
+        $Value=${$SRC}{$Details};
+        print "$Key : $Key\n" if ( $Printout );
+        $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+        print "\$Insert :$Insert:\n" if ( $Printout );
+        push(@Output, "$Insert") if ( ( $DBOut )  && ( ! $RefType )  );
+      }
+    }
+  }
+ 
+  # Les walk the Legs if they exist 
+  if ( ${$SRC}{legs} ) { 
+    $Leg=0;
+    print "Walking Legs\n" if ( $Verbose );
+    my @Legs=${$SRC}{legs};
+    foreach my $Loop ( @Legs ) {
+      foreach my $Loop ( @{$Loop} ) {
+        $Leg++;
+        # Push values from Legs
+        my @DataKeys=( 
+                        'src_device_name', 'src_ip', 'dst_ip', 'dst_device_name', 'src_uri', 'setup_start_ts', 
+                        'callid', 'code', 'dst_ua', 'dst_user', 'ruri', 'src_user', 'state_msg', 'type', 'dst_uri' );
+        foreach my $Looper ( @DataKeys ) {
+          $Key="$Looper";
+          $Value=${$Loop}{$Looper}; $Value="Unknown" if ( ! defined( $Value ) );
+          print "$Key : $Value\n" if ( $Printout );
+          $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+          push(@Output, "$Insert") if ( $DBOut );
+        }
+      }
     }
   }
 }
@@ -199,7 +235,9 @@ sub Get_VQ {
   my $User="admin:oracle";
   my $TargetBase="http://10.240.21.100/";
   my $Target=$TargetBase."/".$URL;
+  my $Value;
 
+  $Leg=42;
 
   my $Converter = new JSON;
   open(INPUT, "/usr/bin/curl -k -L --digest -s --user $User $Target |");
@@ -212,54 +250,77 @@ sub Get_VQ {
 
   my $SRC = $Converter->allow_nonref->utf8->relaxed->escape_slash->loose->allow_singlequote->allow_barekey->decode($JSONString) || die "Can't decode $JSONString :$!:\n";
   my $DATA=${$SRC}{data};
-  print Dumper $DATA if ( $Verbose );
+#  print Dumper $DATA if ( $Verbose );
 
   foreach my $Loop ( @{$DATA} ) {
-    # Call Details is the key for the part ( i.e. setup_time )
-    foreach my $CallVQ ( keys( %{$Loop} ) ) {
-      my $Direction=${$Loop}{direction}; $Direction="Unknown" if ( ! $Direction );
-      my $Value;
-      if ( $CallVQ ne "data" ) {
-        $Key=$Direction."-".$CallVQ;
-        $Value=${$Loop}{$CallVQ}; $Value="NULL" if ( ! ${$Loop}{$CallVQ} );
-        print "$Key : ${$Loop}{$CallVQ}\n" if ( $Printout );
-        $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
-        my $RefType = reftype ${$Loop}{$CallVQ};
-        push(@Output, "$Insert") if ( ( $DBOut )  && ( ! $RefType )  );
-      } else {
-        $Key=$Direction."-moscque_avg";
-        $Value=${$Loop}{data}{moscqe_avg}; $Value="Unknown" if ( ! $Value );
-        print "$Key : $Value\n"if ( $Printout );
-        $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
-        push(@Output, "$Insert") if ( $DBOut );
-        $Key=$Direction."-packets_lost";
-        $Value=${$Loop}{data}{packets_lost}; $Value="Unknown" if ( ! $Value );
-        print "$Key : $Value\n"if ( $Printout );
-        $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
-        push(@Output, "$Insert") if ( $DBOut );
-        $Key=$Direction."-jitter_max";
-        $Value=${$Loop}{data}{jitter_max}; $Value="Unknown" if ( ! $Value );
-        print "$Key : $Value\n"if ( $Printout );
-        $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
-        push(@Output, "$Insert") if ( $DBOut );
-        $Key=$Direction."-jitter_avg";
-        $Value=${$Loop}{data}{jitter_avg}; $Value="Unknown" if ( ! $Value );
-        print "$Key : $Value\n"if ( $Printout );
-        $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
-        push(@Output, "$Insert") if ( $DBOut );
-        $Key=$Direction."-packets_received";
-        $Value=${$Loop}{data}{packets_received}; $Value="Unknown" if ( ! $Value );
-        print "$Key : $Value\n"if ( $Printout );
-        $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
-        push(@Output, "$Insert") if ( $DBOut );
-        $Key=$Direction."-r_factor";
-        $Value=${$Loop}{data}{r_factor}; $Value="Unknown" if ( ! $Value );
-        print "$Key : $Value"if ( $Printout );
+    # Lets insert the SBC to Air leg Quality ( Ground to Air )
+    if ( ( ${$Loop}{source} eq "OCOM-RTP-PROBE" ) && ( ${$Loop}{src_ip} eq "10.240.3.132" )  && ( ${$Loop}{data}{jitter_max} ) ) {
+      # Direction
+      #  Have to hard-code,  not in the data
+      $Key="SBCtoAIR"."-direction";
+      $Value="GroundToAir";
+      print "$Key : $Value\n"if ( $Printout );
+      $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+      push(@Output, "$Insert") if ( $DBOut );
+      # START_TS
+      $Key="SBCtoAIR"."-start_ts";
+      $Value=${$Loop}{start_ts}; $Value="Unknown" if ( ! $Value );
+      print "$Key : $Value\n"if ( $Printout );
+      $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+      push(@Output, "$Insert") if ( $DBOut );
+      # END_TS
+      $Key="SBCtoAIR"."-end_ts";
+      $Value=${$Loop}{start_ts}; $Value="Unknown" if ( ! $Value );
+      print "$Key : $Value\n"if ( $Printout );
+      $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+      push(@Output, "$Insert") if ( $DBOut );
+      # Push values from {data} within the tree
+      my @DataKeys=( 'moscqe_avg', 'packets_lost', 'jitter_max', 'jitter_avg', 'moscqe_min', 'packets_received', 'r_factor', 'jitter_total' );
+      foreach my $Looper ( @DataKeys ) {
+        $Key="SBCtoAIR"."-$Looper";
+        $Value=${$Loop}{data}{$Looper}; $Value="Unknown" if ( ! defined( $Value ) );
+        print "$Key : $Value\n" if ( $Printout );
         $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
         push(@Output, "$Insert") if ( $DBOut );
       }
     }
 
+    # Lets insert the Accuroam to SBC leg Quality ( Air to Ground )
+    if ( ( ${$Loop}{source} eq "SBC-RTP" ) && ( ${$Loop}{src_ip} eq "10.240.82.85" ) && ( ${$Loop}{data}{jitter_max} ) ) {
+      # sip_call_id
+      $Key="ARtoSBC"."-sip_call_id";
+      $Value=${$Loop}{sip_call_id}; $Value="Unknown" if ( ! $Value );
+      print "$Key : $Value\n"if ( $Printout );
+      $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+      push(@Output, "$Insert") if ( $DBOut );
+      # Direction
+      $Key="ARtoSBC"."-direction";
+      $Value="AirToGround";
+      print "$Key : $Value\n"if ( $Printout );
+      $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+      push(@Output, "$Insert") if ( $DBOut );
+      # START_TS
+      $Key="ARtoSBC"."-start_ts";
+      $Value=${$Loop}{start_ts}; $Value="Unknown" if ( ! $Value );
+      print "$Key : $Value\n"if ( $Printout );
+      $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+      push(@Output, "$Insert") if ( $DBOut );
+      # END_TS
+      $Key="ARtoSBC"."-end_ts";
+      $Value=${$Loop}{start_ts}; $Value="Unknown" if ( ! $Value );
+      print "$Key : $Value\n"if ( $Printout );
+      $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+      push(@Output, "$Insert") if ( $DBOut );
+      # Push values from {data} within the tree
+      my @DataKeys=( 'moscqe_avg', 'jitter_max', 'jitter_avg', 'packets_lost', 'packets_received', 'r_factor' );
+      foreach my $Looper ( @DataKeys ) {
+        $Key="ARtoSBC"."-$Looper";
+        $Value=${$Loop}{data}{$Looper}; $Value="Unknown" if ( ! defined( $Value ) );
+        print "$Key : $Value\n" if ( $Printout );
+        $Insert="$Call,$Leg,$Key,$Value" if ( $DBOut );
+        push(@Output, "$Insert") if ( $DBOut );
+      }
+    }
   }
 }
 
@@ -272,12 +333,12 @@ sub Process_Value {
 
   my $RefType = reftype $Ref;
   if ( ! $RefType ) {
-    print "VQ $Ref\n" if ( $Verbose );
+    #print "VQ $Ref\n" if ( $Verbose );
   } elsif ( $RefType eq "HASH" ) {
-    print "Found $RefType at $Ref\n" if ( $Verbose );
+    #print "Found $RefType at $Ref\n" if ( $Verbose );
     &Walk_Hash( $Call, $Ref);
   } elsif ( $RefType eq "ARRAY" ) {
-    print "Found $RefType at $Ref\n" if ( $Verbose );
+    #print "Found $RefType at $Ref\n" if ( $Verbose );
     &Walk_Array( $Call, $Ref);
   }
 }
@@ -289,7 +350,7 @@ sub Walk_Array {
 
   print "  Processing Array $Ref\n" if ( $Verbose );
   foreach my $Loop ( @{$Ref} ) {
-    print "  \$Loop :$Loop:\n" if ( $Verbose );
+    #print "  \$Loop :$Loop:\n" if ( $Verbose );
     &Process_Value( $Call, $Loop );
   }
 
@@ -302,15 +363,17 @@ sub Walk_Hash {
 
   print "Hash 1\n" if ( $Verbose );
   print "  Processing Hash $Ref\n" if ( $Verbose );
-  $Leg++ if ( ${$Ref}{"src_device_name"} );
   print " ** Leg $Leg\n" if ( $Verbose );
   foreach my $Loop ( keys ( %{$Ref} ) ) {
     $Key=$Call.".".$Leg.".".$Loop;
-#    next unless ( ${$Ref}{$Loop} );
     ${$Ref}{$Loop}="NULL" if ( ! ${$Ref}{$Loop} );
     my $RefType = reftype ${$Ref}{$Loop};
+    print "\$Loop :$Loop:\n";
+    print "\${$Ref}{$Loop} :${$Ref}{$Loop}:\n";
+    print "\$RefType :$RefType:\n";
     if ( ! $RefType ) {
-      print "$Key : ${$Ref}{$Loop}\n" if ( $Printout );
+      print "Key = $Key : Value = ${$Ref}{$Loop}\n";
+      print "Key = $Key : Value = ${$Ref}{$Loop}\n" if ( $Printout );
       $Insert="$Call, $Leg, $Loop, ${$Ref}{$Loop}" if ( $DBOut );
       push(@Output, "$Insert") if ( $DBOut );
 
@@ -332,7 +395,6 @@ sub Walk_Hash2 {
 
   print "Hash 2\n" if ( $Verbose );
   print "  Processing Hash $Ref\n" if ( $Verbose );
-  $Leg++ if ( ${$Ref}{"src_device_name"} );
   print " ** Leg $Leg\n" if ( $Verbose );
   foreach my $Loop ( keys ( %{$Ref} ) ) {
     $Key=$Call.".".$Leg.".".$Type.".".$Loop;
@@ -351,7 +413,6 @@ sub Create_Output {
     $sthp = $dbhp->prepare($DBInsert) if ( $opt_P );
   }
 
-  print "  Inserting $#Output Lines.\n" if ( $Verbose );
   foreach $Loop (@Output) {
 
     my ($Var1,$Var2,$Var3,$Var4)=split(',', $Loop);
@@ -365,11 +426,11 @@ sub Create_Output {
     next if ( ! $Var4 =~ /HASH/ );
  
     if ( ! $opt_D ) {
-#      print "Inserting into SIT.\n" if ( $opt_S );
-#      print "Executing execute($Var1,$Var2,$Var3,$Var4)\n" if ( $opt_S );
+      print "Inserting into SIT.\n" if ( ( $opt_S ) && ( $Verbose ) );
+      print "Executing execute($Var1,$Var2,$Var3,$Var4)\n" if ( ( $opt_S ) && ( $Verbose ) );
       $sths->execute($Var1,$Var2,$Var3,$Var4) || die "Couldn't execute statement: ".$sths->errstr." on $Loop\n" if ( $opt_S );
-#      print "Inserting into DEV.\n" if ( $opt_P );
-#      print "Executing execute($Var1,$Var2,$Var3,$Var4)\n" if ( $opt_P );
+      print "Inserting into DEV.\n" if ( ( $opt_P ) && ( $Verbose ) );
+      print "Executing execute($Var1,$Var2,$Var3,$Var4)\n" if ( ( $opt_P ) && ( $Verbose ) );
       $sthp->execute($Var1,$Var2,$Var3,$Var4) || die "Couldn't execute statement: ".$sthp->errstr." on $Loop\n" if ( $opt_P );
     } else {
       print "Executing execute($Var1,$Var2,$Var3,$Var4)\n";
