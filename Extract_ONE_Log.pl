@@ -355,7 +355,7 @@ sub ImportATGConsoleFiles {
 
       $Line=$_;
       $Line =~ s/[^[:print:]]//g;
-      $Line =~ s/\[Thread-\d+\]//g;
+      #$Line =~ s/\[Thread-\d+\]//g;
 
       # Remove Duplicate Lines
       next if ( $LastLine eq $Line );
@@ -664,7 +664,7 @@ sub GPS_Time_Diff {
 
   $GPS_Time=$_[0];
 
-  $GPS_Time =~ /(\d+\.\d+) Console: \- .*GPS TIME +(.*)/;
+  $GPS_Time =~ /(\d+\.\d+) Console:.*GPS TIME +(.*)/;
   
   $ATG=$1;
   $GPS=&ConvertGPSTimeStamp($2);
