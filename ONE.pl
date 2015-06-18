@@ -1479,7 +1479,7 @@ sub Process_Authentication_Status {
   my $Line=$_[0];
   print "\$Line :$Line:\n" if ( $Verbose );
   $Line =~ /(\d\d\d\d-\d\d-\d\d) (\d\d:\d\d:\d\d,\d+).*Authentication Status for +(\d+\.\d+\.\d+\.\d+)\/.*: *(\w+)$/;
-#2015-02-02 19:01:13,118 Console: - Authentication Status for 172.19.134.15/root@aircellmaintenance.com: Success
+
   my $Date=$1;
   my $Time=$2;
   my $Addr=$3;
@@ -1607,7 +1607,7 @@ sub Process_ACPUVersion {
 sub Process_AircardIP {
   my $Line=$_[0];
 
-  $Line =~ /(\d\d\d\d-\d\d-\d\d +\d\d:\d\d:\d\d,\d+) Console: - Aircard(\d+): Aircard Simple IP : (.*)$/;
+  $Line =~ /(\d\d\d\d-\d\d-\d\d +\d\d:\d\d:\d\d,\d+) Console: -\[.*\] Aircard(\d+): Aircard Simple IP : (.*)$/;
 
   my $Date="$1";
   $Aircard{$2}=$3;
@@ -2004,9 +2004,8 @@ sub Process_Keys_Uploaded {
 
   push(@Altitudes,"  $Date Software License Key Uploaded");
 
-  if ( ! $Investigation{"Keys_Uploaded-01"} ) {
-    $Investigation{"Keys_Uploaded-01"}="$Date Software License Keys Uploaded";
-  }
+  $Investigation{"Keys_Uploaded-01"}="$Date Software License Keys Uploaded to ACM Successfully.";
+  $Investigation{"Keys_Uploaded-02"}="  This is not neccesarily an error, just confirmation the ATG uploaded to the ACM correctly.";
 }
 
 
@@ -2075,7 +2074,7 @@ sub Process_ACM_Read_Fail_2_1 {
 
 sub Process_ACM_File_Read {
   my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: - ACM: In DownLoad: listACMFiles: No. of Files in ACM is: (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] ACM: In DownLoad: listACMFiles: No. of Files in ACM is: (.*)/;
 
   my $Date=$1;
   my $Files=$2;
@@ -2092,7 +2091,7 @@ sub Process_ACM_File_Read {
 
 sub Process_Key_Feature {
   my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: - SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getFeature\(\)          : (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getFeature\(\)          : (.*)/;
 #2014-04-29 00:29:40,361 Console: - SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger(): keyValues.getFeature()          : 101
 
   my $Date=$1;
@@ -2110,7 +2109,7 @@ sub Process_Key_Feature_Status {
     $Investigation{"Keys-$KeyCurrent"}="Found Undefined key value $KeyCurrent.  Please notify NetOps.";
   }
 
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: - SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getKeyStatus\(\)        : (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getKeyStatus\(\)        : (.*)/;
 
   my $Date=$1;
   my $Feature=$2;
@@ -2127,7 +2126,7 @@ sub Process_Key_Feature_Status {
 
 sub Process_Key_Feature_Start {
   my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: - SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getStartDate\(\)        : (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getStartDate\(\)        : (.*)/;
 
   my $Date=$1;
   my $Feature=$2;
@@ -2138,7 +2137,7 @@ sub Process_Key_Feature_Start {
 
 sub Process_Key_Feature_End {
   my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: - SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getEndDate\(\)          : (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getEndDate\(\)          : (.*)/;
 
 
   my $Date=$1;
