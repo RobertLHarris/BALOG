@@ -5,12 +5,13 @@ use diagnostics;
 
 # Lets get our DB connection
 use DBI;
-# sqlplus64 GTT_RO/GTT_RO123@//pilclust02-scan.aircell.prod/prdstrm1_service.aircell.prod
+# sqlplus64 GTT_RO/GTT_RO123@//pilclust01-scan.aircell.prod/prdstrm1_service.aircell.prod
 my $SQLUser="GTT_RO";
 my $SQLPassword="GTT_RO123";
-my $SQLHost="pilclust02-scan.aircell.prod";
-my $SQLService="prdstrm1_service.aircell.prod";
-
+#my $SQLHost="pilclust01-scan.aircell.prod";
+my $SQLHost="10.241.108.33";
+my $SQLService="MDLWRDB2_service.aircell.prod";
+my $SQLPort="1655";
 
 # GetOpt
 use vars qw( $opt_h $opt_v $opt_p $opt_g $opt_sipro $opt_history );
@@ -30,8 +31,12 @@ my $GDID;
 print "\n";
 print "Establishing a connection: " if ( $Verbose );
 
-my $dbh = DBI->connect('dbi:Oracle:',"$SQLUser\@$SQLHost/$SQLService","$SQLPassword") || die "Couldn't connect to DB :$?:\n";
-#my $sth=$dbh->prepare("desc p1psg_app.gtt_log;") || die "$?";
+print "sqlplus64 $SQLUser/$SQLPassword\@//$SQLHost:$SQLPort/$SQLService";
+print "sqlplus64 $SQLUser/$SQLPassword\@//$SQLHost:$SQLPort/$SQLService" if ( $Verbose );
+
+#my $dbh = DBI->connect('dbi:Oracle:',"$SQLUser\@$SQLHost:$SQLPort/$SQLService","$SQLPassword") || die "Couldn't connect to DB :$?:\n";
+my $dbh = DBI->connect('dbi:Oracle:',"$SQLUser\@$SQLHost:$SQLPort/$SQLService","$SQLPassword") || die "Couldn't connect to DB :$?:\n";
+#my $sth=$dbh->prepare("desc ACCUROAM_APP.gtt_log;") || die "$?";
 
 print "Connected.\n" if ( $Verbose );
 
@@ -83,12 +88,12 @@ sub Process_Phone_Details {
 
   # Without History
   # They broke this query, re-using txn_id
-  #$Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from p1psg_app.gtt_log l where l.ls_user_phone like '%$Phone%' and l.txn_id in ( select max(txn_id) from p1psg_app.gtt_log t where t.ls_user_phone = l.ls_user_phone ) order by ID";
+  #$Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from ACCUROAM_APP.gtt_log l where l.ls_user_phone like '%$Phone%' and l.txn_id in ( select max(txn_id) from ACCUROAM_APP.gtt_log t where t.ls_user_phone = l.ls_user_phone ) order by ID";
   # Use last CREATED_DAte instead
-  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from p1psg_app.gtt_log l where l.ls_user_phone like '%$Phone%' and l.CREATED_DATE in ( select max(CREATED_DATE) from p1psg_app.gtt_log t where t.ls_user_phone = l.ls_user_phone ) order by ID";
+  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from ACCUROAM_APP.gtt_log l where l.ls_user_phone like '%$Phone%' and l.CREATED_DATE in ( select max(CREATED_DATE) from ACCUROAM_APP.gtt_log t where t.ls_user_phone = l.ls_user_phone ) order by ID";
   # With
-  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from p1psg_app.gtt_log l where l.ls_user_phone like '%$Phone%' order by ID" if ( $opt_history );
-  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from p1psg_app.gtt_log l where l.ls_user_phone like '%$Phone%' order by ID" if ( $opt_history );
+  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from ACCUROAM_APP.gtt_log l where l.ls_user_phone like '%$Phone%' order by ID" if ( $opt_history );
+  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from ACCUROAM_APP.gtt_log l where l.ls_user_phone like '%$Phone%' order by ID" if ( $opt_history );
   print "\$Query :$Query:\n" if ( $Verbose );
   $sth=$dbh->prepare("$Query") || die "$?";
 
@@ -165,11 +170,11 @@ sub Process_GDID_Details {
 
   # Without History
   # They broke this query, re-using txn_id
-  #$Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from p1psg_app.gtt_log l where l.GDID like '%$Phone%' and l.txn_id in ( select max(txn_id) from p1psg_app.gtt_log t where t.GDID = l.GDID ) order by ID";
+  #$Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from ACCUROAM_APP.gtt_log l where l.GDID like '%$Phone%' and l.txn_id in ( select max(txn_id) from ACCUROAM_APP.gtt_log t where t.GDID = l.GDID ) order by ID";
   # Use last CREATED_DAte instead
-  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from p1psg_app.gtt_log l where l.GDID like '%$Phone%' and l.CREATED_DATE in ( select max(CREATED_DATE) from p1psg_app.gtt_log t where t.GDID = l.GDID ) order by ID";
+  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from ACCUROAM_APP.gtt_log l where l.GDID like '%$Phone%' and l.CREATED_DATE in ( select max(CREATED_DATE) from ACCUROAM_APP.gtt_log t where t.GDID = l.GDID ) order by ID";
   # With
-  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from p1psg_app.gtt_log l where l.GDID like '%$Phone%' order by ID" if ( $opt_history );
+  $Query="select ID, SMS_USER_PHONE, GDID, SMS_CARRIER_CONTACT, NETWORK_TYPE, CREATED_DATE, UPDATED_DATE from ACCUROAM_APP.gtt_log l where l.GDID like '%$Phone%' order by ID" if ( $opt_history );
   print "\$Query :$Query:\n" if ( $Verbose );
   $sth=$dbh->prepare("$Query") || die "$?";
 
