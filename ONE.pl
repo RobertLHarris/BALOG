@@ -474,7 +474,7 @@ foreach $Line ( @LogLines ) {
   # Did we write out the config files correctly?
   &Process_ACM_Status("$Line") if ( $Line =~ /downloadFileFromACM\(\): ConfigurationModuleConstants.ACM_CONNECTED_STATUS/ );
   &Process_ACM_File_Read("$Line") if ( $Line =~ /ACM: In DownLoad: listACMFiles: No. of Files in ACM is: / );
-  &Process_ACM_FTP_Read("$Line") if ( $Line =~ /ACM: ConnectACM: Establish FTP Connection for 3 time/ );
+  &Process_ACM_FTP_Fail("$Line") if ( $Line =~ /ACM: ConnectACM: Establish FTP Connection for 3 time/ );
   &Process_ACM_Read_Fail_2_1("$Line")  if ( $Line =~ /FTP Connection Successful with Configuration Module. No. of Files in ACM is :/ );
   # Get KML Data
   &Process_Airlink("$Line") if ( $Line =~ / Airlink: / );
@@ -1890,7 +1890,7 @@ sub Process_Ping_Threshold {
   return if ( $StateLine =~ /HSS: ping/ );
 
   if ( $StateLine =~ /Thread-/ ) {
-    $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) +\-\[Thread\-\d+\] +(.*)$/;
+    $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) Console: +\-\[Thread\-\d+\] +(.*)$/;
     push(@Altitudes, "    PING THRESHOLD: $1");
     $Errors{"PING_THRESHOLD"}="Ping Threshold Reached, aircard reset ( $PowerATGReset times )!";
   } else {
