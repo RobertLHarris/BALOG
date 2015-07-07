@@ -479,7 +479,7 @@ foreach $Line ( @LogLines ) {
   # Get KML Data
   &Process_Airlink("$Line") if ( $Line =~ / Airlink: / );
   # Get GGTT Data
-  &Process_GGTT("$Line") if ( $Line =~ / GGTT: / );
+  &Process_GGTT("$Line") if ( $Line =~ / GGTT: .* GDID / );
   &Process_GGTTSMS("$Line") if ( $Line =~ / GGTTSMS: / );
   # Capture Drift Changes
   &Process_DriftLine("$Line") if ( $Line =~ / Drift: / );
@@ -1890,7 +1890,7 @@ sub Process_Ping_Threshold {
   return if ( $StateLine =~ /HSS: ping/ );
 
   if ( $StateLine =~ /Thread-/ ) {
-    $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) Console: +\-\[Thread\-\d+\] +(.*)$/;
+    $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) Console: +\-\[Thread\-\d+ .*\] +(.*)$/;
     push(@Altitudes, "    PING THRESHOLD: $1");
     $Errors{"PING_THRESHOLD"}="Ping Threshold Reached, aircard reset ( $PowerATGReset times )!";
   } else {
