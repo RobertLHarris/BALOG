@@ -967,7 +967,7 @@ sub ConvertGPSTimeStamp {
   my $Line=$_[0];
   my $Time;
 
-  $Line =~ /^\w+ (\w+) (\d\d+) (\d\d):(\d\d):(\d\d) UTC (\d\d\d\d)/;
+  $Line =~ /^\w+ (\w+) (\d\d+) (\d\d):(\d\d):(\d\d) \w+ (\d\d\d\d)/;
 
   my $TMon = $1;
   my $Day = $2;
