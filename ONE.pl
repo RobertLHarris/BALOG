@@ -28,6 +28,7 @@ use vars qw( $opt_h $opt_v $opt_u $opt_f $opt_t $opt_all $opt_summary $opt_e $op
 use Getopt::Mixed;
 Getopt::Mixed::getOptions("h v u f=s e t all summary temp fan flightstates auth stats start=s end=s pings dhcp values so devices month=s year=s SA Report Prov kml RR");
 
+my $MajorRun=1;
 my $GGTT_Enable=1;
 my $Rand=int( rand( 20 ) );
 
@@ -411,104 +412,115 @@ while(<INPUT>) {
 
 # Need these early
 foreach $Line ( @LogLines ) {
+  next if ( $Line =~ /^$/ );
   # Lets handle any extraction notes first:
   &Process_NetOps_Notes("$Line") if ( $Line =~ /::NetOps Note:/ );
   &Process_ACID("$Line") if ( $Line =~ /ACID: ACM MAC Address: acidValFromScript/ );
   &Process_ACID2("$Line") if ( $Line =~ /ACID: Value parsed successfully:/ );
 }
 
-#
-# Merge in GGTT
-#
-&Get_GGTT if ( ( $GGTT_Enable ) && ( $ACID ));
-@LogLines=sort(@LogLines);
+#print "ACID :$ACID:\n";
 
-foreach $Line ( @LogLines ) {
-  $Line =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\d+)/;
+if ( $MajorRun ) {
+  #
+  # Merge in GGTT
+  #
+  &Get_GGTT if ( ( $GGTT_Enable ) && ( $ACID ));
+  @LogLines=sort(@LogLines);
+  
+  foreach $Line ( @LogLines ) {
+    $Line =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d,\d+)/;
+  
+    my $TestDate=$1;
+  
+    # Lets throw away known 'noise'
+    # The ATG was just reset, we call that separately so these are trash
+    next if ( $Line =~ /Coverage -> false FLIGHT STATE -> null$/ );
+    next if ( $Line =~ /UNKNOWN_STATE$/ );
 
-  my $TestDate=$1;
-
-  # Lets throw away known 'noise'
-  # The ATG was just reset, we call that separately so these are trash
-  next if ( $Line =~ /Coverage -> false FLIGHT STATE -> null$/ );
-  next if ( $Line =~ /UNKNOWN_STATE$/ );
-
-  #
-  # Process ATG Console File Information
-  #
-  &Process_ATGVersion("$Line") if ( $Line =~ /ATG Application Version/ );
-  &Process_ATG_retrieveFiles("$Line") if ( $Line =~ /FTP  Files in ACM are : acmFileList./ );
-  &Process_ATG_Corrupt_Keys("$Line") if ( $Line =~ /keys.amf is corupted/ );
-  &Process_Keys_Installed("$Line") if ( $Line =~ /SUCCESS, Software License Key added successfully/ );
-  &Process_Keys_Deleted("$Line") if ( $Line =~ /SUCCESS, Software License Key deleted successfully/ );
-  &Process_Keys_Uploaded("$Line") if ( $Line =~ /uploadFilesToACM: Uploading FilesList:/ );
-  &Process_Device_Discovered("$Line") if ( $Line =~ /AMP:.*is discovered/ );
-  &Process_Device_Notify("$Line") if ( $Line =~ /Notifying my device that .* is .* because/ );
-  &Process_AircardVersion("$Line") if ( $Line =~ /Aircard Version:/ );
-  &Process_CellOnWheels("$Line") if ( $Line =~ /CellOnWheels=/ );
-  &Process_Authentication_Mesg("$Line") if ( $Line =~ /Authentication Message response/ );
-  &Process_Coverage("$Line") if ( $Line =~ /ABS COVERAGE/ );
-  &Process_Flight_State("$Line") if ( $Line =~ /Flight State \=\=\=/ );
-  &Process_Flight_State_Change("$Line") if ( $Line =~ /Coverage.*FLIGHT/ );
-  &Process_ATG_Link("$Line") if ( $Line =~ / ATG LINK \w+$/ );
-  &Process_SBB_Link("$Line") if ( $Line =~ / SBB_LINK_\w+$/ );
-  &Process_Ping_Test("$Line") if ( $Line =~ /Reset Count: 1 Ping failure: 5/ );
-  &Process_Ping_Test2("$Line") if ( $Line =~ /ICMP ping to AAA server is failed/ );
-  &Process_Ping_Latency_16_1("$Line") if ( $Line =~ /Ping result:/ );
-  &Process_Ping_Latency_2_1("$Line") if ( $Line =~ /Conducting AAA Ping Test:./ );
-  &Process_Ping_Threshold("$Line") if ( $Line =~ /PING_FAILURE_THRESHOLD...5/ );
-  &Process_Signal_Strength("$Line") if ( $Line =~ /Signal Strength:/ );
-#  &Process_Power_Reset("$Line") if ( $Line =~ /Last reset is due/ );
-  &Process_Reset("$Line") if ( $Line =~ /rebootReason : / );
-  &Process_Link_Down("$Line") if ( $Line =~ /atgLink[Down|Up]/ );
-  &Process_Authentication_Status("$Line") if ( $Line =~ /Authentication Status/ );
-  &Process_new_subnet_mask("$Line") if ( $Line =~ /new_subnet_mask/ );
-  &Process_2_3_TimeError("$Line") if ( $Line =~ /rebootReason : System Time and GPS Time/ );
-  &Process_Temp("$Line")  if ( $Line =~ /PCS Power Supply Temp/ );
-  &Process_Fan_RPM("$Line") if ( $Line =~ /Fan is .* with rpm/ );
-  # Process ATG SW Key Lines
-  &Process_Key_Feature("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getFeature\(\)/ );
-  &Process_Key_Feature_Status("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getKeyStatus/ );
-  &Process_Key_Feature_Start("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getStartDate/ );
-  &Process_Key_Feature_End("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getEndDate/ );
-  # Did we write out the config files correctly?
-  &Process_ACM_Status("$Line") if ( $Line =~ /downloadFileFromACM\(\): ConfigurationModuleConstants.ACM_CONNECTED_STATUS/ );
-  &Process_ACM_File_Read("$Line") if ( $Line =~ /ACM: In DownLoad: listACMFiles: No. of Files in ACM is: / );
-  &Process_ACM_FTP_Fail("$Line") if ( $Line =~ /ACM: ConnectACM: Establish FTP Connection for 3 time/ );
-  &Process_ACM_Read_Fail_2_1("$Line")  if ( $Line =~ /FTP Connection Successful with Configuration Module. No. of Files in ACM is :/ );
-  # Get KML Data
-  &Process_Airlink("$Line") if ( $Line =~ / Airlink: / );
-  # Get GGTT Data
-  &Process_GGTT("$Line") if ( $Line =~ / GGTT: .* GDID / );
-  &Process_GGTTSMS("$Line") if ( $Line =~ / GGTTSMS: / );
-  # Capture Drift Changes
-  &Process_DriftLine("$Line") if ( $Line =~ / Drift: / );
-
-  #
-  # 8K Specific Matches
-  #
-  &Process_8K_Temp("$Line")  if ( $Line =~ /ACPU board temperature/ );
-  &Process_8K_Multiplexer_Version("$Line") if ( $Line =~ /Multiplexer Software Version/ );
-  &Process_ACPUVersion("$Line") if ( $Line =~ /ACPU Application Version/ );
-  &Process_AircardIP("$Line") if ( $Line =~ /Aircard Simple IP/ );
-
-  #
-  # Process QoS Lines
-  #
-  &Process_QoS("$Line") if ( $Line =~ /Flow for QoS Profile:/ );
-
-  # These appear to be a false positive.  Disabling until we get details from BA Eng
-#  &Process_QoS_Fail("$Line")  if ( $Line =~ /rule prio 0 protocol 800 reclassify is buggy packet dropped/ );
-#  &Process_Last_Repeat("$Line")  if ( $Line =~ /ATG4K last message repeated .* times/ );
-
-  #
-  # Process ATG Messages File Information
-  #
-  #  Need Both of these?
-  &Process_DHCP_REQUEST("$Line") if ( $Line =~ /DHCPREQUEST from/ );
-  &Process_DHCP_REQUEST("$Line") if ( $Line =~ /DHCPREQUEST for/ );
-  &Process_DHCP_OFFER("$Line") if ( $Line =~ /DHCPOFFER on/ );
-  &Process_DHCP_DHCPACK("$Line") if ( $Line =~ /DHCPACK on/ );
+    #
+    # Process ATG Console File Information
+    #
+    &Process_ATGVersion("$Line") if ( $Line =~ /ATG Application Version/ );
+    &Process_ATG_retrieveFiles("$Line") if ( $Line =~ /FTP  Files in ACM are : acmFileList./ );
+    &Process_ATG_Corrupt_Keys("$Line") if ( $Line =~ /keys.amf is corupted/ );
+    &Process_Keys_Installed("$Line") if ( $Line =~ /SUCCESS, Software License Key added successfully/ );
+    &Process_Keys_Deleted("$Line") if ( $Line =~ /SUCCESS, Software License Key deleted successfully/ );
+    &Process_Keys_Uploaded("$Line") if ( $Line =~ /uploadFilesToACM: Uploading FilesList:/ );
+    &Process_Device_Discovered("$Line") if ( $Line =~ /AMP:.*is discovered/ );
+    &Process_Device_Notify("$Line") if ( $Line =~ /Notifying my device that .* is .* because/ );
+    &Process_AircardVersion("$Line") if ( $Line =~ /Aircard Version:/ );
+    &Process_CellOnWheels("$Line") if ( $Line =~ /CellOnWheels=/ );
+    &Process_Authentication_Mesg("$Line") if ( $Line =~ /Authentication Message response/ );
+    &Process_Coverage("$Line") if ( $Line =~ /ABS COVERAGE/ );
+    &Process_Flight_State("$Line") if ( $Line =~ /Flight State \=\=\=/ );
+    &Process_Flight_State_Change("$Line") if ( $Line =~ /Coverage.*FLIGHT/ );
+    &Process_ATG_Link("$Line") if ( $Line =~ / ATG LINK \w+$/ );
+    &Process_SBB_Link("$Line") if ( $Line =~ / SBB_LINK_\w+$/ );
+    &Process_Ping_Test("$Line") if ( $Line =~ /Reset Count: 1 Ping failure: 5/ );
+    &Process_Ping_Test2("$Line") if ( $Line =~ /ICMP ping to AAA server is failed/ );
+    &Process_Ping_Latency_16_1("$Line") if ( $Line =~ /Ping result:/ );
+    &Process_Ping_Latency_2_1("$Line") if ( $Line =~ /Conducting AAA Ping Test:./ );
+    &Process_Ping_Threshold("$Line") if ( $Line =~ /PING_FAILURE_THRESHOLD...5/ );
+    &Process_Signal_Strength("$Line") if ( $Line =~ /Signal Strength:/ );
+  #  &Process_Power_Reset("$Line") if ( $Line =~ /Last reset is due/ );
+    &Process_Reset("$Line") if ( $Line =~ /rebootReason : / );
+    &Process_Link_Down("$Line") if ( $Line =~ /atgLink[Down|Up]/ );
+    &Process_Authentication_Status("$Line") if ( $Line =~ /Authentication Status/ );
+    &Process_new_subnet_mask("$Line") if ( $Line =~ /new_subnet_mask/ );
+    &Process_2_3_TimeError("$Line") if ( $Line =~ /rebootReason : System Time and GPS Time/ );
+    &Process_Temp("$Line")  if ( $Line =~ /PCS Power Supply Temp/ );
+    &Process_Fan_RPM("$Line") if ( $Line =~ /Fan is .* with rpm/ );
+    # Process ATG SW Key Lines
+    # ForNon  2.4
+    &Process_Key_Feature("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getFeature\(\)/ );
+    &Process_Key_Feature_Status("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getKeyStatus/ );
+    &Process_Key_Feature_Start("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getStartDate/ );
+    &Process_Key_Feature_End("$Line")  if ( $Line =~ /displyKeyValuesLogger\(\): keyValues.getEndDate/ );
+    #  for ATG2.4
+    &Process_Key_Feature("$Line")  if ( $Line =~ /: keyValues.getFeature\(\)/ );
+    &Process_Key_Feature_Status("$Line")  if ( $Line =~ /: keyValues.getKeyStatus/ );
+    &Process_Key_Feature_Start("$Line")  if ( $Line =~ /: keyValues.getStartDate/ );
+    &Process_Key_Feature_End("$Line")  if ( $Line =~ /: keyValues.getEndDate/ );
+    # Did we write out the config files correctly?
+    &Process_ACM_Status("$Line") if ( $Line =~ /downloadFileFromACM\(\): ConfigurationModuleConstants.ACM_CONNECTED_STATUS/ );
+    &Process_ACM_File_Read("$Line") if ( $Line =~ /ACM: In DownLoad: listACMFiles: No. of Files in ACM is: / );
+    &Process_ACM_FTP_Fail("$Line") if ( $Line =~ /ACM: ConnectACM: Establish FTP Connection for 3 time/ );
+    &Process_ACM_Read_Fail_2_1("$Line")  if ( $Line =~ /FTP Connection Successful with Configuration Module. No. of Files in ACM is :/ );
+    # Get KML Data
+    &Process_Airlink("$Line") if ( $Line =~ / Airlink: / );
+    # Get GGTT Data
+    &Process_GGTT("$Line") if ( $Line =~ / GGTT: .* GDID / );
+    &Process_GGTTSMS("$Line") if ( $Line =~ / GGTTSMS: / );
+    # Capture Drift Changes
+    &Process_DriftLine("$Line") if ( $Line =~ / Drift: / );
+  
+    #
+    # 8K Specific Matches
+    #
+    &Process_8K_Temp("$Line")  if ( $Line =~ /ACPU board temperature/ );
+    &Process_8K_Multiplexer_Version("$Line") if ( $Line =~ /Multiplexer Software Version/ );
+    &Process_ACPUVersion("$Line") if ( $Line =~ /ACPU Application Version/ );
+    &Process_AircardIP("$Line") if ( $Line =~ /Aircard Simple IP/ );
+  
+    #
+    # Process QoS Lines
+    #
+    &Process_QoS("$Line") if ( $Line =~ /Flow for QoS Profile:/ );
+  
+    # These appear to be a false positive.  Disabling until we get details from BA Eng
+    #  &Process_QoS_Fail("$Line")  if ( $Line =~ /rule prio 0 protocol 800 reclassify is buggy packet dropped/ );
+    #  &Process_Last_Repeat("$Line")  if ( $Line =~ /ATG4K last message repeated .* times/ );
+  
+    #
+    # Process ATG Messages File Information
+    #
+    #  Need Both of these?
+    &Process_DHCP_REQUEST("$Line") if ( $Line =~ /DHCPREQUEST from/ );
+    &Process_DHCP_REQUEST("$Line") if ( $Line =~ /DHCPREQUEST for/ );
+    &Process_DHCP_OFFER("$Line") if ( $Line =~ /DHCPOFFER on/ );
+    &Process_DHCP_DHCPACK("$Line") if ( $Line =~ /DHCPACK on/ );
+  }
 }
 
 &Calculate_Signals if ( $KML );
@@ -608,8 +620,8 @@ sub Display_Stats {
       }
     } else {
       if ( ( $AircardType ne "Unknown" ) && ( $ATGVersion ne "Unknown" ) ) {
-        print "      No Pairs defined for this ATG Version Configuration.\n";
-        print "      Please notify NetOps.\n";
+        print "      ** No Pairs defined for this ATG Version Configuration.\n";
+        print "      ** Please notify NetOps.\n";
         $Investigation{"ATG-Aircard pair"}="** No Pairs defined for this ATG Version Configuration.";
       }
     }
@@ -733,9 +745,10 @@ sub Display_Stats {
     print "\n";
   } else {
     print "Software Keys:\n";
-    print "  * No software keys installed.\n";
+    print "  ** No software keys installed.\n";
   }
 
+  print "\n";
   print "GGTT Data:\n";
   if ( @CallData ) {
     foreach $Loop ( sort @CallData ) {
@@ -976,7 +989,7 @@ sub Display_Errors {
     print " * Nothing identified.\n";
   } else {
     if ( scalar ( keys ( %KeysInstalled ) ) < 1 ) {
-      print "  * No software keys installed.\n";
+      print "  ** No software keys installed.\n";
       print "    This could be a problem with the ACM, deleted keys or key file corruption.\n";
     }
     foreach $Loop ( sort ( keys ( %Investigation ) ) ) {
@@ -1676,27 +1689,41 @@ sub Process_ACID {
   my $Date="$1";
   my $TempVersion=$2;
 
-#print "Process_ACID :$StateLine:\n";
+#print "ACID1 :$TempVersion:\n";
 
+  if (( $ACID ne "" ) && ( $TempVersion eq "" )) {
+    $ACIDCHANGED="*** Error: ACID Version became undefined mid log from $OrigACID at $1";
+    push(@Altitudes, " $Date *** Error: ACID Version became undefined mid log from $OrigACID at $1");
+    $Investigation{"ACIDUndefined"}="ACID Version bæcame undefined mid log from -$OrigACID- on $Date";
+  }
   $ACID=$TempVersion if ( $ACID eq "" );
   if ( $ACID ne $TempVersion ) {
     $OrigACID=$ACID;
-    $ACIDCHANGED="*** Error: ACID Version changed mid log from $OrigACID to $TempVersion at $1";
-    push(@Altitudes, " $Date *** Error: ACID Version changed mid log from $OrigACID to $TempVersion at $1");
-    $Investigation{"AircardVersion"}="ACID Version changed mid log from -$OrigACID- to -$TempVersion- on $Date";
+    $ACIDCHANGED="*** Error: ACID Version became undefined mid log from $OrigACID at $1";
+    push(@Altitudes, " $Date *** Error: ACID Version became undefined mid log from $OrigACID at $1");
+    $Investigation{"ACIDUndefined"}="ACID Version bæcame undefined mid log from -$OrigACID- on $Date";
     $ACID=$TempVersion;
   }
+#  print "\$ACID :$ACID:\n";
 }
 
 
 sub Process_ACID2 { 
   my $StateLine=$_[0];
 
+#print "Processing $StateLine\n";
+
   $StateLine =~ /(\d\d\d\d-\d\d-\d\d +\d\d:\d\d:\d\d\,\d+).*ACID: Value parsed successfully: +(.*)/;
 
   my $Date="$1";
   my $TempVersion=$2;
+#  print "ACID2 :$TempVersion:\n";
 
+  if (( $ACID ne "" ) && ( $TempVersion eq "" )) {
+    $ACIDCHANGED="*** Error: ACID Version changed mid log from $OrigACID to $TempVersion at $1";
+    push(@Altitudes, " $Date *** Error: ACID Version changed mid log from $OrigACID to $TempVersion at $1");
+    $Investigation{"ACIDUndefined"}="ACID Version changed mid log from -$OrigACID- to -$TempVersion- on $Date";
+  }
   $ACID=$TempVersion if ( $ACID eq "" );
   if ( $ACID ne $TempVersion ) {
     $OrigACID=$ACID;
@@ -1705,6 +1732,7 @@ sub Process_ACID2 {
     $Investigation{"AircardVersion"}="ACID Version changed mid log from -$OrigACID- to -$TempVersion- on $Date";
     $ACID=$TempVersion;
   }
+#  print "\$ACID :$ACID:\n";
 }
 
 
@@ -1889,8 +1917,10 @@ sub Process_Ping_Threshold {
   return if ( $Flight_State ne "ABOVE_SERVICE_ALTITUDE" );
   return if ( $StateLine =~ /HSS: ping/ );
 
+
   if ( $StateLine =~ /Thread-/ ) {
-    $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) Console: +\-\[Thread\-\d+ .*\] +(.*)$/;
+    $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,\d+) Console: .* +(\d+)$/;
+#                                 2015-11-01 15:11:55,108000 Console: -[Thread-7] PING_FAILURE_THRESHOLD = 5
     push(@Altitudes, "    PING THRESHOLD: $1");
     $Errors{"PING_THRESHOLD"}="Ping Threshold Reached, aircard reset ( $PowerATGReset times )!";
   } else {
@@ -2074,7 +2104,7 @@ sub Process_ACM_Read_Fail_2_1 {
 
 sub Process_ACM_File_Read {
   my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] ACM: In DownLoad: listACMFiles: No. of Files in ACM is: (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: .*ACM: In DownLoad: listACMFiles: No. of Files in ACM is: (.*)/;
 
   my $Date=$1;
   my $Files=$2;
@@ -2091,8 +2121,10 @@ sub Process_ACM_File_Read {
 
 sub Process_Key_Feature {
   my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getFeature\(\)          : (.*)/;
-#2014-04-29 00:29:40,361 Console: - SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger(): keyValues.getFeature()          : 101
+
+  # Disabling extended text
+  #$StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getFeature\(\)          : (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: .* SW_KEYS: .*: keyValues.getFeature\(\)          : (.*)/;
 
   my $Date=$1;
   my $Feature=$2;
@@ -2104,12 +2136,16 @@ sub Process_Key_Feature {
 sub Process_Key_Feature_Status {
   my $StateLine=$_[0];
 
+  return if ( ! $KeyCurrent );
   print "Key Status : \$KeysInstalled{$KeyCurrent} :$KeysInstalled{$KeyCurrent}:\n" if ( $Verbose );
   if ( ! $KeyCurrent ) {
     $Investigation{"Keys-$KeyCurrent"}="Found Undefined key value $KeyCurrent.  Please notify NetOps.";
   }
 
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getKeyStatus\(\)        : (.*)/;
+  # Disabling extended text
+  #$StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getKeyStatus\(\)        : (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: .* SW_KEYS: .*: displyKeyValuesLogger\(\): keyValues.getKeyStatus\(\) +: (.*)/;
+#                                2015-04-14 22:53:26,381000 Console: .* SW_KEYS: .*: displyKeyValuesLogger\(\): keyValues.getKeyStatus\(\)        : Not Installed
 
   my $Date=$1;
   my $Feature=$2;
@@ -2126,7 +2162,10 @@ sub Process_Key_Feature_Status {
 
 sub Process_Key_Feature_Start {
   my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getStartDate\(\)        : (.*)/;
+
+  # Disabling extended text
+  #$StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getStartDate\(\)        : (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: .* SW_KEYS: .*: displyKeyValuesLogger\(\): keyValues.getStartDate\(\)        : (.*)/;
 
   my $Date=$1;
   my $Feature=$2;
@@ -2137,7 +2176,10 @@ sub Process_Key_Feature_Start {
 
 sub Process_Key_Feature_End {
   my $StateLine=$_[0];
-  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getEndDate\(\)          : (.*)/;
+
+  # Disabling extended text
+  #$StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: AbsControlServiceImpl: displyKeyValuesLogger\(\): keyValues.getEndDate\(\)          : (.*)/;
+  $StateLine =~ /(\d\d\d\d-\d\d-\d\d \d\d:\d\d:\d\d\,*\d*) Console: -\[.*\] SW_KEYS: .*: displyKeyValuesLogger\(\): keyValues.getEndDate\(\)          : (.*)/;
 
 
   my $Date=$1;
